@@ -819,6 +819,9 @@ export function createFeaturesChangeTracker(
 ) {
   const known = new Map<string, GeoLibreLayer["geojson"]>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Layers whose cleared state the host was told about; a later removal of
+  // one of them is still worth a `removed: true` report.
+  const cleared = new Set<string>();
 
   const clear = (layerId: string) => {
     const timer = timers.get(layerId);
@@ -835,10 +838,18 @@ export function createFeaturesChangeTracker(
         present.add(layer.id);
         const previous = known.get(layer.id);
         known.set(layer.id, layer.geojson);
-        // A layer whose geojson becomes undefined while it stays present is not
-        // reported (no current store path does this); only removal is.
-        if (layer.geojson === previous || !layer.geojson) continue;
+        if (layer.geojson === previous) continue;
         clear(layer.id);
+        if (!layer.geojson) {
+          // The layer stays but lost its in-memory features: tell the host at
+          // once (count 0, not removed) and drop any report still waiting.
+          if (previous) {
+            cleared.add(layer.id);
+            report({ layerId: layer.id, featureCount: 0 });
+          }
+          continue;
+        }
+        cleared.delete(layer.id);
         timers.set(
           layer.id,
           setTimeout(() => {
@@ -853,14 +864,16 @@ export function createFeaturesChangeTracker(
         if (present.has(layerId)) continue;
         known.delete(layerId);
         clear(layerId);
+        const wasCleared = cleared.delete(layerId);
         // A layer that never held features has nothing to tell the host.
-        if (geojson) report({ layerId, featureCount: 0, removed: true });
+        if (geojson || wasCleared) report({ layerId, featureCount: 0, removed: true });
       }
     },
     /** Forget every layer and cancel pending reports (project switch, teardown). */
     reset(layers: GeoLibreLayer[] = []) {
       for (const layerId of [...timers.keys()]) clear(layerId);
       known.clear();
+      cleared.clear();
       for (const layer of layers) known.set(layer.id, layer.geojson);
     },
   };

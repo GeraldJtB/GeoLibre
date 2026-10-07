@@ -88,8 +88,9 @@ Events: `ready`, `ack`, `projectLoaded`, `selectionChanged`, `viewChanged`,
 Sketches layers combined; an empty array if nothing is drawn yet). They reject
 for an unknown layer and when the deployment denies `export:data`. A layer that
 holds no in-memory features (raster, tiles, remote vector sources) returns an
-empty array; check its `type` via `listLayers` to tell that from an empty
-vector layer. `featuresChanged` (`{ layerId, featureCount, removed? }`)
+empty array, so an empty array means "no in-memory features" (an empty layer,
+or a raster, tile or remote source); the layer `type` does not tell these
+apart. A removed layer rejects. `featuresChanged` (`{ layerId, featureCount, removed? }`)
 fires, debounced per layer, when a layer's in-memory feature collection is
 replaced (drawings, edits, attribute edits, refreshes, late-loaded data; it may
 fire without a content change), and at once with `removed: true` when such a
@@ -97,7 +98,11 @@ layer is removed. It is not sent for whole project loads (use `projectLoaded`)
 and needs `export:data`:
 
 ```ts
-map.on("featuresChanged", async ({ layerId }) => {
+map.on("featuresChanged", async ({ layerId, removed }) => {
+  if (removed) {
+    // The layer is gone and getLayerFeatures would reject: drop your copy.
+    return;
+  }
   const features = await map.getLayerFeatures(layerId);
 });
 ```

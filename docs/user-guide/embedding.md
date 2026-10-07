@@ -387,7 +387,11 @@ const added = await map.addData("https://assets.geolibre.app/data/places.geojson
 const layers = await map.listLayers();
 map.on("selectionChanged", ({ featureIds }) => console.log(featureIds));
 // Read back what the user drew or edited:
-map.on("featuresChanged", async ({ layerId }) => {
+map.on("featuresChanged", async ({ layerId, removed }) => {
+  if (removed) {
+    removeFromBackend(layerId); // the layer is gone; getLayerFeatures would reject
+    return;
+  }
   const features = await map.getLayerFeatures(layerId);
   saveToBackend(layerId, features);
 });
@@ -604,8 +608,10 @@ and the Python widget's `get_features` and `get_drawn_features`.
   Point features with those properties as hints about the original shape.
 - **Errors:** an unknown `layerId` is rejected (`No layer with id "…"`). A layer
   that holds no in-memory features, such as a raster, a tile or PMTiles layer, or
-  a remote vector source, returns an empty array. To tell that from
-  an empty vector layer, check the layer's `type` with `listLayers`.
+  a remote vector source, returns an empty array. An empty array therefore
+  means "no in-memory features" (an empty layer, or a raster, tile or remote
+  source); the layer `type` from `listLayers` cannot tell these apart. A removed
+  layer is rejected like an unknown one.
 - **Capability:** `export:data`, because data leaves the app. A denied call
   rejects with `Missing export:data capability`, like `exportImage`, and
   `featuresChanged` is not sent either.
@@ -617,14 +623,20 @@ may fire without a content change, and it is not sent for whole project loads
 (use `projectLoaded`). It also fires for layers the host itself created with
 `addLayer` or `addData`, so do not write each event straight back as a new
 layer, or you will loop. When a layer that held features is removed it is sent at
-once as `{ layerId, featureCount: 0, removed: true }`. Events are **debounced per
+once as `{ layerId, featureCount: 0, removed: true }`, and a layer that stays but
+loses its in-memory features is reported with `featureCount: 0` (no `removed`).
+Events are **debounced per
 layer**: a burst of changes, such as dragging a vertex, produces one event 250 ms
 after the last change, so listen for it and then call `getLayerFeatures`. An edit made
 less than 250 ms before a renderer hand-off may be folded into the new baseline
 and not reported.
 
 ```ts
-map.on("featuresChanged", async ({ layerId, featureCount }) => {
+map.on("featuresChanged", async ({ layerId, featureCount, removed }) => {
+  if (removed) {
+    removeFromBackend(layerId); // the layer is gone; getLayerFeatures would reject
+    return;
+  }
   console.log(`${layerId} now has ${featureCount} features`);
   const features = await map.getLayerFeatures(layerId);
   saveToBackend(layerId, features);

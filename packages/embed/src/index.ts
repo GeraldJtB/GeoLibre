@@ -118,8 +118,9 @@ export interface GeoLibreEmbedClient {
    * Read a layer's features (WGS84, ids exactly as stored), the same as the
    * plugin API's `getLayerFeatures`. Rejects for an unknown layer. A layer
    * that holds no in-memory features (raster, tiles, remote vector sources)
-   * resolves to an empty array; check its `type` via `listLayers` to tell that
-   * from an empty vector layer.
+   * resolves to an empty array. An empty array therefore means "no in-memory
+   * features" (an empty layer, or a raster, tile or remote source); the layer
+   * `type` from `listLayers` cannot tell these apart. Removed layers reject.
    */
   getLayerFeatures(layerId: string): Promise<EmbedFeature[]>;
   /**

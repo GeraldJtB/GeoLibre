@@ -1099,6 +1099,26 @@ describe("createFeaturesChangeTracker", () => {
     assert.deepEqual(reports, []);
   });
 
+  it("reports a layer whose geojson is cleared as count 0 and drops a waiting report", () => {
+    const { tracker, reports, push } = setup();
+    const noGeojson = layer({ id: "a", type: "geojson" });
+    tracker.reset([geo("a", point(1))]);
+    push([geo("a", point(1), point(2))]);
+    push([noGeojson]);
+    assert.deepEqual(reports, [{ layerId: "a", featureCount: 0 }]);
+    mock.timers.tick(EMBED_FEATURES_DEBOUNCE_MS);
+    assert.equal(reports.length, 1, "the pending change must not fire after the clear");
+  });
+
+  it("still reports the removal of a layer that was cleared before", () => {
+    const { tracker, reports, push } = setup();
+    tracker.reset([geo("a", point(1))]);
+    push([layer({ id: "a", type: "geojson" })]);
+    reports.length = 0;
+    push([]);
+    assert.deepEqual(reports, [{ layerId: "a", featureCount: 0, removed: true }]);
+  });
+
   it("reports a re-added layer as a change", () => {
     const { tracker, reports, push } = setup();
     tracker.reset([geo("a", point(1))]);
