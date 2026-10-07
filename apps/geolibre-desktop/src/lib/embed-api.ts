@@ -40,6 +40,9 @@ export const EMBED_ORIGINS_ENV = "VITE_GEOLIBRE_EMBED_ORIGINS";
 /** Any-origin wildcard accepted in the allowlist. */
 export const EMBED_ORIGIN_WILDCARD = "*";
 
+/** Quiet period before a layer's `featuresChanged` is emitted. */
+export const EMBED_FEATURES_DEBOUNCE_MS = 250;
+
 type EnvRecord = Record<string, string | undefined> | undefined;
 
 /**
@@ -161,7 +164,9 @@ export type EmbedCommand =
   | { type: "getViewport" }
   | { type: "addLayer"; spec: AddLayerSpec }
   | { type: "addData"; url: string; styleUrl: string | null; fit: boolean }
-  | { type: "exportImage" };
+  | { type: "exportImage" }
+  | { type: "getLayerFeatures"; layerId: string }
+  | { type: "getDrawnFeatures" };
 
 /** A parsed inbound message: the command plus the host's correlation id. */
 export interface EmbedRequest {
@@ -179,7 +184,8 @@ export type EmbedEventType =
   | "rendererchange"
   | "viewChanged"
   | "toolCompleted"
-  | "serverFileWritten";
+  | "serverFileWritten"
+  | "featuresChanged";
 
 /** An app → host message, ready to hand to `postMessage`. */
 export interface EmbedEvent {
@@ -642,6 +648,13 @@ export function parseEmbedRequest(
     }
     case "exportImage":
       return { command: { type: "exportImage" }, requestId };
+    case "getLayerFeatures":
+      if (typeof payload.layerId !== "string" || !payload.layerId) {
+        return fail("getLayerFeatures: layerId must be a non-empty string");
+      }
+      return { command: { type: "getLayerFeatures", layerId: payload.layerId }, requestId };
+    case "getDrawnFeatures":
+      return { command: { type: "getDrawnFeatures" }, requestId };
     default:
       return null;
   }
@@ -757,5 +770,98 @@ export function buildEmbedLayer(spec: AddLayerSpec, layers: GeoLibreLayer[]): Ge
     metadata: spec.metadata ?? {},
     ...(spec.geojson ? { geojson: spec.geojson as GeoLibreLayer["geojson"] } : {}),
     ...(spec.beforeId ? { beforeId: spec.beforeId } : {}),
+  };
+}
+
+/**
+ * Throw the message the host receives in its `ack` when the deployment has not
+ * granted a capability. The same wording `exportImage` and the other gated
+ * verbs use.
+ *
+ * @param capabilities - The store's `deploymentCapabilities`.
+ * @param capability - The capability the command needs, e.g. `export:data`.
+ */
+export function assertEmbedCapability(
+  capabilities: { has(capability: string): boolean },
+  capability: string,
+): void {
+  if (!capabilities.has(capability)) throw new Error(`Missing ${capability} capability`);
+}
+
+/** What {@link createFeaturesChangeTracker} reports for one layer. */
+export interface EmbedFeaturesChange {
+  layerId: string;
+  featureCount: number;
+  /** True when the layer was removed; `featureCount` is then 0. */
+  removed?: boolean;
+}
+
+/**
+ * Detect geojson changes on layers and report them debounced per layer.
+ *
+ * Call `update` with the store's layers on every store change. A change is a
+ * different `layer.geojson` reference, or a layer appearing with features: the
+ * editor creates its Sketches layer together with the first drawing, so a first
+ * appearance has to count. A burst of changes to one layer (a vertex drag)
+ * collapses into one report after the quiet period, carrying the feature count
+ * at that moment. Layers debounce independently. A removal is reported at once
+ * with `removed: true` and drops any report still waiting. `reset` re-baselines
+ * silently, which is how a whole-project load stays quiet.
+ *
+ * @param report - Receives each change.
+ * @param getLayers - Reads the current layers when a timer fires.
+ * @param debounceMs - Quiet period, defaults to {@link EMBED_FEATURES_DEBOUNCE_MS}.
+ */
+export function createFeaturesChangeTracker(
+  report: (change: EmbedFeaturesChange) => void,
+  getLayers: () => GeoLibreLayer[],
+  debounceMs: number = EMBED_FEATURES_DEBOUNCE_MS,
+) {
+  const known = new Map<string, GeoLibreLayer["geojson"]>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const clear = (layerId: string) => {
+    const timer = timers.get(layerId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timers.delete(layerId);
+  };
+
+  return {
+    /** Diff against the previous layers; schedule a report per changed layer. */
+    update(layers: GeoLibreLayer[]) {
+      const present = new Set<string>();
+      for (const layer of layers) {
+        present.add(layer.id);
+        const previous = known.get(layer.id);
+        known.set(layer.id, layer.geojson);
+        // A layer whose geojson becomes undefined while it stays present is not
+        // reported (no current store path does this); only removal is.
+        if (layer.geojson === previous || !layer.geojson) continue;
+        clear(layer.id);
+        timers.set(
+          layer.id,
+          setTimeout(() => {
+            timers.delete(layer.id);
+            const current = getLayers().find((item) => item.id === layer.id);
+            if (!current?.geojson) return;
+            report({ layerId: layer.id, featureCount: current.geojson.features.length });
+          }, debounceMs),
+        );
+      }
+      for (const [layerId, geojson] of [...known]) {
+        if (present.has(layerId)) continue;
+        known.delete(layerId);
+        clear(layerId);
+        // A layer that never held features has nothing to tell the host.
+        if (geojson) report({ layerId, featureCount: 0, removed: true });
+      }
+    },
+    /** Forget every layer and cancel pending reports (project switch, teardown). */
+    reset(layers: GeoLibreLayer[] = []) {
+      for (const layerId of [...timers.keys()]) clear(layerId);
+      known.clear();
+      for (const layer of layers) known.set(layer.id, layer.geojson);
+    },
   };
 }
