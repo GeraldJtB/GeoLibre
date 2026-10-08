@@ -1,5 +1,9 @@
 import type { MapEngine } from "@geolibre/map";
-import { VIEWER_BLOCKED_PLUGIN_IDS } from "@geolibre/plugins";
+import {
+  VIEWER_BLOCKED_PLUGIN_IDS,
+  isViewerBlockedPlugin,
+  setGeoEditorFileTools,
+} from "@geolibre/plugins";
 import { useCallback, useEffect, type RefObject } from "react";
 import type { LayoutOptions } from "../useLayoutOptions";
 import { createAppAPI, getPluginManager } from "../usePlugins";
@@ -15,9 +19,10 @@ export function useViewerPluginGuard(
   layoutOptions: LayoutOptions,
   mapControllerRef: RefObject<MapEngine | null>,
 ) {
-  // The plugins in VIEWER_BLOCKED_PLUGIN_IDS paint drawing and editing controls
-  // onto the map, which the read-only viewer preset cannot hide the way it
-  // hides React chrome, so they are deactivated outright. This has to run more
+  // The plugins in VIEWER_BLOCKED_PLUGIN_IDS (minus the geometry editor when the
+  // launch opted into `?draw`) paint drawing and editing controls onto the map,
+  // which the read-only viewer preset cannot hide the way it hides React
+  // chrome, so they are deactivated outright. This has to run more
   // than once: `restoreProjectState` activates whatever a loaded project lists
   // in `projectPlugins.activePluginIds` with no viewer awareness, so every
   // project load — the initial `?url=` one and any later `loadProject` embed
@@ -28,6 +33,9 @@ export function useViewerPluginGuard(
     if (!layoutOptions.viewer) return;
     const manager = getPluginManager();
     for (const id of VIEWER_BLOCKED_PLUGIN_IDS) {
+      if (!isViewerBlockedPlugin(id, { viewer: true, drawing: layoutOptions.viewerDrawing })) {
+        continue;
+      }
       if (!manager.isActive(id)) continue;
       // `isActive` is true from the moment activation starts, so a plugin that
       // mounts behind a dynamic import (GeoAgent) is "active" with no control
@@ -43,7 +51,14 @@ export function useViewerPluginGuard(
       }
       manager.deactivate(id, createAppAPI(mapControllerRef));
     }
-  }, [layoutOptions.viewer, mapControllerRef]);
+  }, [layoutOptions.viewer, layoutOptions.viewerDrawing, mapControllerRef]);
+
+  // The editor's Open/Save file buttons import and export GeoJSON, which would
+  // bypass the `data:add` and `export:data` gates, so the viewer drops them.
+  // Before the guard effect, so it is set before any restore can mount the editor.
+  useEffect(() => {
+    setGeoEditorFileTools(!layoutOptions.viewer);
+  }, [layoutOptions.viewer]);
 
   useEffect(() => {
     enforceViewerPlugins();

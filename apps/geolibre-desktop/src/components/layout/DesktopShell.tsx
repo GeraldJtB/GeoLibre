@@ -157,6 +157,7 @@ import { useFileDrop } from "../../hooks/desktop-shell/useFileDrop";
 import { useKnowledgeCard } from "../../hooks/desktop-shell/useKnowledgeCard";
 import { useLayerEditActions } from "../../hooks/desktop-shell/useLayerEditActions";
 import { useIdentifyEditActions } from "../../hooks/desktop-shell/useIdentifyEditActions";
+import { identifyEditActionsForLayout } from "../../lib/identify-edit-actions-layout";
 import { useLayerImport } from "../../hooks/desktop-shell/useLayerImport";
 import { useMapControlLabels } from "../../hooks/desktop-shell/useMapControlLabels";
 import { useMapFullscreenAttribute } from "../../hooks/desktop-shell/useMapFullscreenAttribute";
@@ -396,6 +397,12 @@ export function DesktopShell({
     canEditLayer: collaboration.canEditLayer,
     editFeatureGeometry: handleEditFeatureGeometry,
   });
+  // Identify's Edit geometry / Edit attributes start an editor session on the
+  // clicked layer, which the read-only viewer must not offer.
+  const viewerIdentifyEditActions = identifyEditActionsForLayout(
+    identifyEditActions,
+    layoutOptions.viewer,
+  );
   useTileProtocols();
   useRasterFileHandlers(mapControllerRef, t);
   // Fetching the registry also tells the credential redaction which external
@@ -447,6 +454,7 @@ export function DesktopShell({
     mapControllerRef,
     enforceViewerPlugins,
     viewer: layoutOptions.viewer,
+    viewerDrawing: layoutOptions.viewerDrawing,
     externalPluginsReady,
     mapReadyGeneration,
     projectUrlSettled:
@@ -775,7 +783,7 @@ export function DesktopShell({
                     engineRef={mapControllerRef}
                     identifyAllLabels={identifyAllLabels}
                     identifyRasterLayerAt={identifyRasterLayerAt}
-                    identifyEditActions={identifyEditActions}
+                    identifyEditActions={viewerIdentifyEditActions}
                     onEngineReady={handleMapControllerReady}
                     onMapDiagnosticEvent={handleMapDiagnosticEvent}
                   />
@@ -801,7 +809,7 @@ export function DesktopShell({
                       controllerRef={mapControllerRef}
                       identifyAllLabels={identifyAllLabels}
                       identifyRasterLayerAt={identifyRasterLayerAt}
-                      identifyEditActions={identifyEditActions}
+                      identifyEditActions={viewerIdentifyEditActions}
                       onMapDiagnosticEvent={handleMapDiagnosticEvent}
                       onControllerReady={handleMapControllerReady}
                     />

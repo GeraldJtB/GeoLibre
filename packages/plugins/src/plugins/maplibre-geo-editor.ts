@@ -102,6 +102,18 @@ export function setGeoEditorLabels(next: Partial<GeoEditorLabels>): void {
   geoEditorLabels = { ...geoEditorLabels, ...next };
 }
 
+let geoEditorFileTools = true;
+
+/**
+ * Show or hide the toolbar's Open/Save GeoJSON file buttons. The host turns
+ * them off in the read-only viewer, where they would import and export data
+ * around the deployment's capability gates. Read at construction, so it
+ * applies the next time the plugin is activated.
+ */
+export function setGeoEditorFileTools(enabled: boolean): void {
+  geoEditorFileTools = enabled;
+}
+
 let geoEditorPosition: GeoLibreMapControlPosition = "top-left";
 
 const GEO_EDITOR_OPTIONS = {
@@ -386,9 +398,10 @@ function activateGeoEditor(app: GeoLibreAppAPI): false | undefined {
   return undefined;
 }
 
-function getGeoEditorOptions(mapboxGl: MapboxGl | null): GeoEditorOptions {
+export function getGeoEditorOptions(mapboxGl: MapboxGl | null): GeoEditorOptions {
   return {
     ...GEO_EDITOR_OPTIONS,
+    fileModes: geoEditorFileTools ? GEO_EDITOR_OPTIONS.fileModes : [],
     // Only when present: an explicit `createPopup: undefined` would override
     // the control's MapLibre default rather than fall through to it.
     ...(mapboxGl

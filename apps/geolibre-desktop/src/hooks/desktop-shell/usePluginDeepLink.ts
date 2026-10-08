@@ -1,6 +1,6 @@
 import type { MapEngine } from "@geolibre/map";
 import i18next from "i18next";
-import { VIEWER_BLOCKED_PLUGIN_IDS } from "@geolibre/plugins";
+import { isViewerBlockedPlugin } from "@geolibre/plugins";
 import {
   useCallback,
   useEffect,
@@ -39,6 +39,8 @@ interface PluginDeepLinkOptions {
   enforceViewerPlugins: () => void;
   /** Whether the app runs in the read-only `layout=viewer` preset. */
   viewer: boolean;
+  /** Whether the viewer lets the geometry editor run (`?layout=viewer&draw`). */
+  viewerDrawing: boolean;
   externalPluginsReady: boolean;
   mapReadyGeneration: number;
   /**
@@ -121,6 +123,7 @@ export function usePluginDeepLink({
   mapControllerRef,
   enforceViewerPlugins,
   viewer,
+  viewerDrawing,
   externalPluginsReady,
   mapReadyGeneration,
   projectUrlSettled,
@@ -162,7 +165,7 @@ export function usePluginDeepLink({
         // Skipped rather than left to the guard: activating would mount the
         // editing control for a moment and record it in the project's plugin
         // state, so every later restore would bring it back.
-        if (viewer && VIEWER_BLOCKED_PLUGIN_IDS.includes(id)) continue;
+        if (isViewerBlockedPlugin(id, { viewer, drawing: viewerDrawing })) continue;
         try {
           if (!(await activateDeepLinkedPlugin(id, mapControllerRef))) {
             console.warn(`[GeoLibre] The plugin "${id}" from the ?plugin= link did not activate.`);
@@ -249,6 +252,7 @@ export function usePluginDeepLink({
     targets,
     enforceViewerPlugins,
     viewer,
+    viewerDrawing,
     externalPluginsReady,
     mapReadyGeneration,
     projectUrlSettled,
