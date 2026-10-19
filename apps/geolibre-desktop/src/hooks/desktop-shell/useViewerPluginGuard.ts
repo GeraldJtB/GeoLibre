@@ -55,10 +55,12 @@ export function useViewerPluginGuard(
 
   // The editor's Open/Save file buttons import and export GeoJSON, which would
   // bypass the `data:add` and `export:data` gates, so the viewer drops them.
-  // Before the guard effect, so it is set before any restore can mount the editor.
-  useEffect(() => {
-    setGeoEditorFileTools(!layoutOptions.viewer);
-  }, [layoutOptions.viewer]);
+  // The editor reads this flag once, when it is constructed, and the plugin
+  // restore and the `?plugin=` deep link construct it from effects. A
+  // child's effect runs before this component's own, so an effect here could
+  // lose that race; setting the flag while rendering cannot, because every
+  // effect in the tree runs after the render. The write is idempotent.
+  setGeoEditorFileTools(!layoutOptions.viewer);
 
   useEffect(() => {
     enforceViewerPlugins();

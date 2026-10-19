@@ -228,13 +228,23 @@ blocked. Combine it with `plugin=geo-editor` to open the drawing toolbar on
 load:
 
 ```text
-https://web.geolibre.app/?url=https://share.geolibre.app/you/project.geolibre.json&layout=viewer&draw&plugin=geo-editor
+https://geolibre.example.org/?url=https://share.geolibre.app/you/project.geolibre.json&layout=viewer&draw&plugin=geo-editor
 ```
 
 What the user draws lands in a Sketches layer. A host page reads it back with
 `getDrawnFeatures()` and is told about changes by the `featuresChanged` event
 (see [Reading features back](#reading-features-back)), so the host decides what
 to do with the geometry.
+
+Drawing itself needs only the `project:edit` capability, but reading the
+drawings back goes through the embed API, so it needs two more things. Your
+page's origin must be on the deployment's embed allowlist (see
+[Talking to the map at runtime](#talking-to-the-map-at-runtime)), and the
+deployment must grant the `export:data`
+[capability](../deployment-capabilities.md), which `getDrawnFeatures()` and
+`featuresChanged` require. The public `web.geolibre.app` has no allowlist, so
+the example above uses a placeholder for a deployment you host yourself; on
+the public site the toolbar draws, but a host page cannot read the result.
 
 A project saved with the geometry editor active opens its toolbar on load, with
 or without `plugin=geo-editor`, as it does in the full app. The toolbar's

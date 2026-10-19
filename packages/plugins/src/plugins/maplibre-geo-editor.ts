@@ -401,6 +401,9 @@ function activateGeoEditor(app: GeoLibreAppAPI): false | undefined {
 export function getGeoEditorOptions(mapboxGl: MapboxGl | null): GeoEditorOptions {
   return {
     ...GEO_EDITOR_OPTIONS,
+    // An empty list is safe upstream: the control merges options over its
+    // defaults with a spread (so `[]` is kept) and only builds the file group
+    // when `fileModes.length > 0` (maplibre-gl-geo-editor, createToolbar).
     fileModes: geoEditorFileTools ? GEO_EDITOR_OPTIONS.fileModes : [],
     // Only when present: an explicit `createPopup: undefined` would override
     // the control's MapLibre default rather than fall through to it.
