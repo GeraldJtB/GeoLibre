@@ -6,6 +6,8 @@ export * from "./photo";
 export * from "./ellipsoids";
 export * from "./regional-basemaps";
 export * from "./cesium-imagery";
+export * from "./arcgis-projection";
+export * from "./map-crs";
 export * from "./geojson-z";
 export * from "./color-ramp";
 export * from "./paths";
@@ -143,6 +145,17 @@ export {
   geocodeForward,
   geocodeReverse,
   setGeocodingFetch,
+  setGeocodingTokenProvider,
+  geocoderSupportsReverse,
+  selectedGeocodingLocator,
+  normalizeArcGISLocatorUrl,
+  normalizeGeocodingLocator,
+  parseArcGISLocatorInfo,
+  fetchArcGISLocatorInfo,
+  GeocoderServiceError,
+  GeocoderUnsupportedError,
+  type ArcGISLocatorCapabilities,
+  type GeocodingTokenProvider,
   type GeocoderConfig,
   type GeocodingProvider,
   type GeocodingProviderId,
@@ -252,3 +265,16 @@ export {
   type CesiumKmlLayerOptions,
 } from "./cesium-kml";
 export { localFileName, uniqueImportedLayerName } from "./file-name";
+export {
+  datumShiftFor,
+  installCogTilerDatumShift,
+  withDatumShift,
+  withGeoKeysDatumShift,
+} from "./datum-shift";
+
+export {
+  convertTiffYCbCrToRgb,
+  isAbbreviatedJpegCompression,
+  patchJpegCogSource,
+  withJpegTablesPatch,
+} from "./cog-jpeg-tables";

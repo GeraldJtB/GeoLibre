@@ -41,6 +41,7 @@ import {
   maplibreNasaEarthdataPlugin,
   maplibreNationalMapPlugin,
   maplibreUsgsDemPlugin,
+  maplibreEarthaccessPlugin,
   maplibreOpenAerialMapPlugin,
   maplibreOsmDownloaderPlugin,
   maplibreIgnLidarHdPlugin,
@@ -123,6 +124,11 @@ import {
   openFloatingPanel,
   closeFloatingPanel,
   getOpenFloatingPanels,
+  getGeometryEditTargetLayerId,
+  getLastGeometryEditEnd,
+  subscribeGeometryEdit,
+  isPluginEngineSupported,
+  startLayerGeometryEdit,
   setArcGisPortalAuth,
   setLocalizedErrorTranslator,
 } from "@geolibre/plugins";
@@ -214,6 +220,7 @@ const BUILT_IN_PLUGINS: GeoLibrePlugin[] = [
   maplibrePlanetOpenDataPlugin,
   maplibrePortolanPlugin,
   maplibreEarthdataGisPlugin,
+  maplibreEarthaccessPlugin,
   maplibreOpenAerialMapPlugin,
   maplibreOsmDownloaderPlugin,
   maplibreIgnLidarHdPlugin,
@@ -1225,6 +1232,12 @@ const appApiHost: AppApiHost = {
   openFloatingPanel,
   closeFloatingPanel,
   getOpenFloatingPanels,
+  getGeometryEditTargetLayerId,
+  getLastGeometryEditEnd,
+  subscribeGeometryEdit,
+  isPluginEngineSupported,
+  maplibreGeoEditorPlugin,
+  startLayerGeometryEdit,
 };
 
 /**

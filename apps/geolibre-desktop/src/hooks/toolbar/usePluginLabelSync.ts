@@ -60,6 +60,9 @@ export function usePluginLabelSync(): void {
       noAddress: t("geocode.reverseNoAddress"),
       copyAddress: t("geocode.reverseCopyAddress"),
       failed: t("geocode.reverseFailed"),
+      unsupported: t("geocode.reverseUnsupported"),
+      authRequired: t("geocode.authRequired"),
+      closePopup: t("geocode.reverseClosePopup"),
     });
     setBasemapControlLabels({
       confirmStyleReplace: (name, count) => t("basemaps.confirmStyleReplace", { name, count }),
@@ -1024,6 +1027,7 @@ export function usePluginLabelSync(): void {
       formatPmtiles: t("stacPlugin.formatPmtiles"),
       formatParquet: t("stacPlugin.formatParquet"),
       formatZarr: t("stacPlugin.formatZarr"),
+      formatPointCloud: t("stacPlugin.formatPointCloud"),
       formatUnknown: t("stacPlugin.formatUnknown"),
       addNoTarget: t("stacPlugin.addNoTarget"),
       addIcechunkFailed: t("stacPlugin.addIcechunkFailed"),

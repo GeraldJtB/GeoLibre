@@ -1,3 +1,5 @@
+import { normalizeArcgisWkid } from "./arcgis-projection";
+import { normalizeMapCrs } from "./map-crs";
 import { normalizeCesiumBasemap } from "./cesium-imagery";
 import { parseCesiumIonAssetId } from "./cesium-ion";
 import { redactUrlCredentials } from "./credentials";
@@ -75,6 +77,7 @@ import {
   type PrintLayoutConfig,
 } from "./print-layout-config";
 import { getEllipsoid } from "./ellipsoids";
+import { normalizeGeocodingLocator } from "./geocoding";
 import {
   scrubWidgetsForRemovedLayers,
   scrubCommentsForRemovedLayers,
@@ -457,6 +460,7 @@ export function parseProject(json: string): GeoLibreProject {
     storymap: normalizeStoryMap(data.storymap) ?? undefined,
     models: normalizeModels(data.models) ?? undefined,
     processingHistory: normalizeProcessingHistory(data.processingHistory) ?? undefined,
+    obia: normalizeObiaWorkbench(data.obia) ?? undefined,
     widgets: normalizeWidgets(data.widgets) ?? undefined,
     ...bookmarkFields(data.bookmarks, data.bookmarkGroups),
     ...(data.dashboardColumns === undefined
@@ -954,6 +958,26 @@ const LEGACY_H3_PROCESSING_TOOL_IDS: Readonly<Record<string, string>> = {
  * @param value Raw `processingHistory` value from the project JSON.
  * @returns Normalized runs, or `null` when none survive.
  */
+/**
+ * Accept the Object-Based Analysis workbench blob (`obia`) only as a plain,
+ * JSON-serializable object carrying a numeric `version`. Its fields are owned
+ * and validated by the desktop app, which treats anything it does not
+ * recognise as absent; core only guarantees the shape survives a round trip.
+ *
+ * @param value Raw `obia` value from the project JSON.
+ * @returns A detached copy, or `null` when absent or malformed.
+ */
+export function normalizeObiaWorkbench(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (typeof (value as { version?: unknown }).version !== "number") return null;
+  try {
+    const copy: unknown = JSON.parse(JSON.stringify(value));
+    return copy && typeof copy === "object" ? (copy as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeProcessingHistory(value: unknown): ProcessingRun[] | null {
   if (!Array.isArray(value)) return null;
   // Bound the work for a crafted or corrupted file (shared/collaboration
@@ -1520,6 +1544,10 @@ function normalizeProjectPreferences(preferences: unknown): ProjectPreferences {
         normalizeString((map as Partial<ProjectPreferences["map"]>).mapboxStyleUrl) || undefined,
       arcgisBasemap:
         normalizeString((map as Partial<ProjectPreferences["map"]>).arcgisBasemap) || undefined,
+      // Missing (every project before #2708) or Web Mercator is the default map.
+      arcgisWkid: normalizeArcgisWkid((map as Partial<ProjectPreferences["map"]>).arcgisWkid),
+      // Missing (every project before #1128) or Web Mercator is the default map.
+      mapCrs: normalizeMapCrs((map as Partial<ProjectPreferences["map"]>).mapCrs),
       // Missing means follow the saved project basemap, as it does for
       // `mapboxStyleUrl` above: a project written before this field existed
       // chose nothing, and reapplying the new-project default would repaint
@@ -1608,7 +1636,32 @@ function normalizeGeocodingPreferences(geocoding: unknown): ProjectPreferences["
       typeof candidate.email === "string" && candidate.email.trim()
         ? candidate.email.trim()
         : undefined,
+    ...normalizeGeocodingLocators(candidate.locators, candidate.locatorId),
   };
+}
+
+/**
+ * The project's ArcGIS GeocodeServer locators, dropping malformed entries and
+ * duplicate ids, plus the selected locator id when it still names one. Both are
+ * omitted when there are none, so older projects round-trip unchanged.
+ */
+function normalizeGeocodingLocators(
+  locators: unknown,
+  locatorId: unknown,
+): Pick<ProjectPreferences["geocoding"], "locators" | "locatorId"> {
+  if (!Array.isArray(locators)) return {};
+  const seen = new Set<string>();
+  const result = locators
+    .map(normalizeGeocodingLocator)
+    .filter((locator): locator is NonNullable<typeof locator> => {
+      if (!locator || seen.has(locator.id)) return false;
+      seen.add(locator.id);
+      return true;
+    });
+  if (!result.length) return {};
+  return typeof locatorId === "string" && seen.has(locatorId)
+    ? { locators: result, locatorId }
+    : { locators: result };
 }
 
 /** Coerce an unknown value to a supported scale unit, defaulting to metric. */
@@ -1952,6 +2005,7 @@ export function projectFromStore(state: {
   storymap?: StoryMap | null;
   models?: ProcessingModel[] | null;
   processingHistory?: ProcessingRun[] | null;
+  obia?: Record<string, unknown> | null;
   widgets?: DashboardWidget[] | null;
   bookmarks?: ProjectBookmark[] | null;
   bookmarkGroups?: ProjectBookmarkGroup[] | null;
@@ -1980,6 +2034,7 @@ export function projectFromStore(state: {
   const storymap = normalizeStoryMap(state.storymap);
   const models = normalizeModels(state.models);
   const processingHistory = normalizeProcessingHistory(state.processingHistory);
+  const obia = normalizeObiaWorkbench(state.obia);
   const widgets = normalizeWidgets(state.widgets);
   const comments = normalizeProjectComments(state.comments);
   const interaction = normalizeProjectInteraction(state.interaction);
@@ -2029,6 +2084,7 @@ export function projectFromStore(state: {
     ...(storymap ? { storymap } : {}),
     ...(models ? { models } : {}),
     ...(processingHistory ? { processingHistory } : {}),
+    ...(obia ? { obia } : {}),
     ...(widgets ? { widgets } : {}),
     ...bookmarkFields(state.bookmarks, state.bookmarkGroups),
     ...(dashboardColumns !== DEFAULT_DASHBOARD_COLUMNS ? { dashboardColumns } : {}),
@@ -2359,6 +2415,7 @@ export function applyProjectToStore(project: GeoLibreProject): {
   storymap: StoryMap | null;
   models: ProcessingModel[];
   processingHistory: ProcessingRun[];
+  obiaWorkbench: Record<string, unknown> | null;
   widgets: DashboardWidget[];
   bookmarks: ProjectBookmark[];
   bookmarkGroups: ProjectBookmarkGroup[];
@@ -2458,6 +2515,7 @@ export function applyProjectToStore(project: GeoLibreProject): {
     storymap: normalizeStoryMap(project.storymap),
     models: normalizeModels(project.models) ?? [],
     processingHistory: normalizeProcessingHistory(project.processingHistory) ?? [],
+    obiaWorkbench: normalizeObiaWorkbench(project.obia),
     widgets: scrubbedWidgets,
     bookmarkGroups,
     bookmarks: normalizeBookmarks(project.bookmarks, bookmarkGroups),

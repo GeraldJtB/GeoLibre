@@ -137,6 +137,38 @@ export {
 } from "./plugins/arcgis-layer";
 export type { ArcGISDomainDiagnostic } from "./plugins/arcgis-domains";
 export {
+  addArcGISAttachment,
+  arcGISAttachmentObjectId,
+  arcGISAttachmentSupport,
+  arcGISRelatedAttachmentSupport,
+  deleteArcGISAttachments,
+  downloadArcGISAttachment,
+  listArcGISAttachments,
+  updateArcGISAttachment,
+  type ArcGISAttachmentInfo,
+  type ArcGISAttachmentSource,
+  type ArcGISAttachmentSupport,
+} from "./plugins/arcgis-attachments";
+export {
+  addArcGISRelatedRecord,
+  arcGISRelatedEditSupport,
+  arcGISRelatedFields,
+  arcGISRelatedNewRecordDefaults,
+  arcGISRelatedParentKey,
+  arcGISRelatedParentObjectId,
+  arcGISRelationships,
+  deleteArcGISRelatedRecord,
+  fetchArcGISRelatedTableInfo,
+  queryArcGISRelatedRecords,
+  updateArcGISRelatedRecord,
+  type ArcGISRelatedEditSupport,
+  type ArcGISRelatedField,
+  type ArcGISRelatedRecord,
+  type ArcGISRelatedRecords,
+  type ArcGISRelatedTableInfo,
+  type ArcGISRelationship,
+} from "./plugins/arcgis-related-records";
+export {
   closeBookmarkPanel,
   closeColorbarPanel,
   closeHtmlPanel,
@@ -276,6 +308,20 @@ export {
   type InlineZarrGrid,
 } from "./plugins/local-netcdf";
 export {
+  alongTrackKm,
+  detectSpaceborneLidarProduct,
+  openSpaceborneLidar,
+  SPACEBORNE_LIDAR_PRODUCTS,
+  type SpaceborneLidarBeam,
+  type SpaceborneLidarField,
+  type SpaceborneLidarFieldSpec,
+  type SpaceborneLidarFile,
+  type SpaceborneLidarFootprints,
+  type SpaceborneLidarProductId,
+  type SpaceborneLidarProductSpec,
+  type SpaceborneLidarReadOptions,
+} from "./plugins/spaceborne-lidar";
+export {
   closeDuckDBLayerPanel,
   getDuckDBFeatureBounds,
   getDuckDBLayerRows,
@@ -330,11 +376,15 @@ export {
   setLocalRasterPicker,
   setNonTiledRasterHandler,
   setRasterPixelInspect,
+  setUnrestorableRasterHandler,
   type LocalRasterFileReader,
   type LocalRasterPicker,
   type NonTiledRasterRequest,
   type PickedLocalRaster,
+  type UnrestorableRasterHandler,
 } from "./plugins/maplibre-raster";
+// Lets the save flow warn about local rasters a saved project cannot reload.
+export { isUnsavableLocalRaster } from "./plugins/raster-layer-sync";
 export { getSharedDeckLoadState } from "./plugins/shared-deck-overlay";
 export {
   RASTER_MAX_CLASSES,
@@ -517,6 +567,8 @@ export {
   startLayerGeometryEdit,
   endLayerGeometryEdit,
   getGeometryEditTargetLayerId,
+  getLastGeometryEditEnd,
+  type GeometryEditEnd,
   selectGeometryEditFeature,
   isGeoEditorUsingRightClick,
   subscribeGeometryEdit,
@@ -583,6 +635,15 @@ export {
   type EarthdataGisSearchResult,
   type EarthdataServiceKind,
 } from "./plugins/earthdata-gis-api";
+export { EARTHACCESS_PLUGIN_ID, maplibreEarthaccessPlugin } from "./plugins/maplibre-earthaccess";
+export {
+  CMR_SEARCH_URL,
+  EARTHDATA_PRESETS,
+  searchEarthdataCollections,
+  searchEarthdataGranules,
+  type EarthdataCollection,
+  type EarthdataGranule,
+} from "./plugins/earthaccess-api";
 export {
   DEFAULT_OPENAERIALMAP_LABELS,
   maplibreOpenAerialMapPlugin,

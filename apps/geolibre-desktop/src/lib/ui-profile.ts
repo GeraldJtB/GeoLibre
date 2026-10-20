@@ -97,6 +97,12 @@ export const DATA_SOURCE_CATALOG: readonly DataSourceCatalogEntry[] = [
   },
   { id: "mbtiles", section: "files", labelKey: "toolbar.layerType.mbtiles", tier: "basic" },
   { id: "osm-pbf", section: "files", labelKey: "toolbar.item.osmPbfLayer", tier: "advanced" },
+  {
+    id: "spaceborne-lidar",
+    section: "files",
+    labelKey: "toolbar.item.spaceborneLidarLayer",
+    tier: "advanced",
+  },
   // Web services
   { id: "xyz", section: "webServices", labelKey: "toolbar.layerType.xyz", tier: "basic" },
   { id: "wcs", section: "webServices", labelKey: "toolbar.layerType.wcs", tier: "basic" },
@@ -560,6 +566,12 @@ export const MENU_ITEM_CATALOG: readonly MenuItemCatalogEntry[] = [
     tier: "advanced",
   },
   {
+    id: "processing.obiaWorkbench",
+    menuId: "processing",
+    labelKey: "toolbar.item.obiaWorkbench",
+    tier: "advanced",
+  },
+  {
     id: "processing.segmentation",
     menuId: "processing",
     labelKey: "toolbar.command.segmentation",
@@ -745,6 +757,12 @@ export const MENU_ITEM_CATALOG: readonly MenuItemCatalogEntry[] = [
     id: "controls.directions",
     menuId: "controls",
     labelKey: "toolbar.item.directions",
+    tier: "intermediate",
+  },
+  {
+    id: "controls.navigation",
+    menuId: "controls",
+    labelKey: "toolbar.item.navigation",
     tier: "intermediate",
   },
   {

@@ -2,6 +2,7 @@ mod arcgis_http;
 mod aws_credentials;
 mod aws_sts;
 mod plugin_http;
+mod remote_download;
 // Earth Engine sign-in uses Google's OAuth loopback-redirect flow, which binds
 // a listener on 127.0.0.1 to accept the browser's redirect. Accepting an
 // inbound connection requires the `com.apple.security.network.server`
@@ -431,6 +432,7 @@ pub fn run() {
         .manage(SelectedImagePaths::default())
         .manage(arcgis_http::ArcGISRequests::default())
         .manage(plugin_http::PluginHttpRequests::default())
+        .manage(remote_download::RemoteDownloads::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         // Runs before persisted-scope's setup hook so legacy photo grants are
@@ -498,6 +500,10 @@ pub fn run() {
             arcgis_http::cancel_arcgis_request,
             plugin_http::plugin_http_request,
             plugin_http::cancel_plugin_http_request,
+            remote_download::download_remote_file,
+            remote_download::cancel_remote_download,
+            remote_download::pick_download_folder,
+            remote_download::take_cached_download,
             aws_credentials::aws_list_profiles,
             aws_credentials::aws_resolve_credentials,
             aws_credentials::aws_sso_login_start,
@@ -556,11 +562,15 @@ pub fn run() {
             // The portable zip has no installer step, so nothing registers the
             // OAuth callback scheme and a sign-in link from the browser never
             // reaches the app (#2667). `build-portable.ps1` drops a marker next
-            // to the exe; only that build claims the scheme, per user, at
-            // runtime. NSIS/MSI already register it at install time, and MSIX
-            // declares it in the package manifest and virtualizes HKCU writes.
+            // to the exe; that build always claims the scheme, per user, at
+            // runtime. The bare `geolibre-desktop_windows_x64.exe` release
+            // asset has no installer or marker either, so any other non-MSIX
+            // build claims it too when no live handler exists (#3042). NSIS/MSI
+            // register it at install time, so their handler is live and left
+            // alone, and MSIX declares it in the package manifest and
+            // virtualizes HKCU writes.
             #[cfg(windows)]
-            if is_portable_windows_build() {
+            if windows_deep_link_needs_registration() {
                 spawn_deep_link_registration(app);
             }
             Ok(())
@@ -604,10 +614,41 @@ fn current_working_directory() -> PathBuf {
 #[cfg(any(windows, test))]
 const PORTABLE_MARKER_FILE: &str = "portable.marker";
 
-/// Whether this process runs from the portable zip rather than an installer.
+/// URL scheme the share-server OAuth callback uses (`plugins > deep-link` in
+/// `tauri.conf.json`).
 #[cfg(windows)]
-fn is_portable_windows_build() -> bool {
-    env::current_exe().is_ok_and(|exe| exe_has_portable_marker(&exe))
+const DEEP_LINK_SCHEME: &str = "org.geolibre.desktop";
+
+/// Whether this process should claim the OAuth callback scheme at startup.
+///
+/// The portable build always does. An MSIX install never does. Any other
+/// build (an NSIS/MSI install, or the bare exe from the release page) does
+/// only when the scheme has no live handler, so a bare exe never takes the
+/// scheme away from an installed copy.
+#[cfg(windows)]
+fn windows_deep_link_needs_registration() -> bool {
+    let Ok(exe) = env::current_exe() else {
+        return false;
+    };
+    if exe_has_portable_marker(&exe) {
+        return true;
+    }
+    if is_msix_install(&exe) {
+        return false;
+    }
+    // Without a `URL Protocol` value Windows never launches the key's command
+    // for a URI, so such a key counts as no handler at all.
+    let command = windows_registry::CLASSES_ROOT
+        .open(DEEP_LINK_SCHEME)
+        .ok()
+        .filter(|scheme| scheme.get_string("URL Protocol").is_ok())
+        .and_then(|scheme| {
+            scheme
+                .open("shell\\open\\command")
+                .and_then(|key| key.get_string(""))
+                .ok()
+        });
+    scheme_handler_missing(command.as_deref(), Path::is_file)
 }
 
 /// Whether a portable marker file sits next to `exe`. Kept free of
@@ -616,6 +657,48 @@ fn is_portable_windows_build() -> bool {
 fn exe_has_portable_marker(exe: &Path) -> bool {
     exe.parent()
         .is_some_and(|dir| dir.join(PORTABLE_MARKER_FILE).is_file())
+}
+
+/// Whether `exe` runs from an MSIX package, which Windows always installs
+/// under `...\WindowsApps\`.
+#[cfg(any(windows, test))]
+fn is_msix_install(exe: &Path) -> bool {
+    exe.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("WindowsApps")
+    })
+}
+
+/// Whether a scheme's registered `shell\open\command` fails to launch an
+/// existing program: nothing registered, an unparsable command, or a program
+/// that was moved or deleted (such as a bare exe run once from Downloads).
+/// So another handler is never overwritten on a guess, a program path with `%`
+/// (an unexpanded `REG_EXPAND_SZ` variable) counts as live, and so does an
+/// unquoted command: its path may contain spaces, and the handlers Tauri, NSIS
+/// and MSI write are always quoted, so an unquoted one belongs to another app.
+#[cfg(any(windows, test))]
+fn scheme_handler_missing(command: Option<&str>, exists: impl Fn(&Path) -> bool) -> bool {
+    let Some(command) = command.map(str::trim).filter(|command| !command.is_empty()) else {
+        return true;
+    };
+    if !command.starts_with('"') {
+        return false;
+    }
+    match handler_program(command) {
+        Some(program) => !program.contains('%') && !exists(Path::new(program)),
+        None => true,
+    }
+}
+
+/// The program path of a quoted `shell\open\command` value
+/// (`"C:\Program Files\App\app.exe" "%1"`), or `None` when the value is
+/// unquoted or the quotes are empty.
+#[cfg(any(windows, test))]
+fn handler_program(command: &str) -> Option<&str> {
+    let program = command.trim_start().strip_prefix('"')?.split('"').next()?;
+    (!program.is_empty()).then_some(program)
 }
 
 fn has_geolibre_project_extension(path: &Path) -> bool {
@@ -2149,7 +2232,9 @@ fn load_external_plugin_archive(
 /// full path within the archive, or None when no plugin.json is present.
 #[cfg(not(feature = "mas"))]
 fn find_zip_manifest_path<R: Read + std::io::Seek>(archive: &zip::ZipArchive<R>) -> Option<String> {
-    let names: Vec<&str> = archive.file_names().collect();
+    // Entries whose names can't be decoded can't be the manifest; skip them.
+    let owned: Vec<_> = archive.file_names().filter_map(Result::ok).collect();
+    let names: Vec<&str> = owned.iter().map(|name| name.as_ref()).collect();
     if names.contains(&"plugin.json") {
         return Some("plugin.json".to_string());
     }
@@ -4505,7 +4590,10 @@ fn extract_martin_binary_from_zip(archive: &[u8], binary_path: &Path) -> Result<
         let mut file = archive
             .by_index(index)
             .map_err(|error| format!("Could not read Martin zip entry: {error}"))?;
-        let path = PathBuf::from(file.name());
+        let name = file
+            .name()
+            .map_err(|error| format!("Could not read Martin zip entry name: {error}"))?;
+        let path = PathBuf::from(name.as_ref());
         if path.file_name().and_then(|name| name.to_str()) != Some(executable_name) {
             continue;
         }
@@ -5323,6 +5411,54 @@ mod tests {
         assert!(!super::exe_has_portable_marker(
             &nested.join("geolibre-desktop.exe")
         ));
+    }
+
+    // The bare release exe claims the OAuth callback scheme only when no live
+    // handler exists (#3042): an installed copy's handler stays put, while a
+    // missing key or a handler pointing at a deleted exe gets replaced.
+    #[cfg(not(feature = "mas"))]
+    #[test]
+    fn scheme_handler_missing_only_without_a_live_program() {
+        let installed = r#""C:\Program Files\GeoLibre Desktop\geolibre-desktop.exe" "%1""#;
+        assert_eq!(
+            super::handler_program(installed),
+            Some(r"C:\Program Files\GeoLibre Desktop\geolibre-desktop.exe")
+        );
+        assert_eq!(super::handler_program(r"C:\Tools\geolibre.exe %1"), None);
+        assert_eq!(super::handler_program(r#""" "%1""#), None);
+        assert_eq!(super::handler_program("   "), None);
+
+        assert!(super::scheme_handler_missing(None, |_| true));
+        assert!(super::scheme_handler_missing(Some(""), |_| true));
+        assert!(!super::scheme_handler_missing(Some(installed), |_| true));
+        assert!(super::scheme_handler_missing(Some(installed), |_| false));
+        assert!(!super::scheme_handler_missing(
+            Some(r#""%ProgramFiles%\GeoLibre Desktop\geolibre-desktop.exe" "%1""#),
+            |_| false
+        ));
+        // An unquoted path may hold spaces, so another app's handler is kept.
+        assert!(!super::scheme_handler_missing(
+            Some(r"C:\Program Files\Other App\app.exe %1"),
+            |_| false
+        ));
+        assert!(super::scheme_handler_missing(Some(r#""" "%1""#), |_| true));
+    }
+
+    #[cfg(not(feature = "mas"))]
+    #[test]
+    fn msix_install_is_detected_by_windowsapps_path() {
+        assert!(super::is_msix_install(std::path::Path::new(
+            "/Program Files/WindowsApps/OpenGeospatialSolutions.GeoLibre_3.3.0.0_x64__abc/geolibre-desktop.exe"
+        )));
+        assert!(super::is_msix_install(std::path::Path::new(
+            "/program files/windowsapps/pkg/geolibre-desktop.exe"
+        )));
+        assert!(!super::is_msix_install(std::path::Path::new(
+            "/Users/me/Downloads/geolibre-desktop_windows_x64.exe"
+        )));
+        assert!(!super::is_msix_install(std::path::Path::new(
+            "/Users/me/MyWindowsAppsBackup/geolibre-desktop.exe"
+        )));
     }
 
     #[cfg(not(feature = "mas"))]

@@ -52,6 +52,12 @@ export type CogWasmCompression = (typeof COG_WASM_COMPRESSIONS)[number];
 export interface ConvertGeoTiffToCogOptions {
   /** Tile compression codec. Defaults to `"deflate"`. */
   compression?: CogWasmCompression;
+  /**
+   * Build the overview pyramid (default true). The encoder downsamples with a
+   * 2x2 average that ignores NoData, which blends categorical values (class
+   * codes, colors at class edges), so categorical rasters should pass false.
+   */
+  overviews?: boolean;
 }
 
 /** Hard ceiling for the browser converter's decoded sample count. */
@@ -169,6 +175,10 @@ export async function convertGeoTiffToCog(
       const epsg = reader.epsg;
       if (typeof epsg === "number" && Number.isFinite(epsg)) {
         builder.set_epsg(epsg);
+      } else if (reader.proj_string) {
+        // A user-defined projection (e.g. South Africa's Lo29, ESRI:102567) has
+        // no EPSG code; carry its projection GeoKeys over instead.
+        builder.set_proj_string(reader.proj_string);
       }
       const geoTransform = reader.geo_transform();
       if (geoTransform.length >= 6) builder.set_geo_transform(geoTransform);
@@ -178,7 +188,10 @@ export async function convertGeoTiffToCog(
       }
       builder.set_tile_size(COG_TILE_SIZE);
       builder.set_compression(options.compression ?? "deflate");
-      builder.set_overview_levels(overviewLevels(width, height));
+      // An explicit empty list writes no overviews (unset would auto-compute them).
+      builder.set_overview_levels(
+        options.overviews === false ? new Uint32Array() : overviewLevels(width, height),
+      );
 
       // read_all_f64 is the one reader that decodes any source dtype (Int16,
       // Float32, ...) to a common type; the typed per-band readers

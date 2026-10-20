@@ -17,7 +17,7 @@ workflow and [Projects](user-guide/projects.md) for saving and reopening data.
 | Shapefile | `.shp` with companion files, or `.zip` | Vector Layer | Keep `.shx`, `.dbf`, and `.prj` companions together; use a ZIP for browser imports. |
 | GML | `.gml` | Vector Layer | Imported through the vector reader. |
 | MapInfo TAB | `.tab` and companion files | Vector Layer | Requires access to the dataset's companion files. |
-| KML / KMZ | `.kml`, `.kmz` | KML / KMZ or Vector Layer | Supports folders, styles, ground overlays, embedded models, and Super-Overlays; behavior depends on the renderer. |
+| KML / KMZ | `.kml`, `.kmz` | KML / KMZ or Vector Layer | Supports folders, styles, placemark icons, ground overlays, embedded models, and Super-Overlays; behavior depends on the renderer. Remote icon URLs (such as Google Earth's built-in icons) are downloaded from their public host when the file is opened and saved inline with the layer. Icon URLs that name a loopback or private-network address are skipped, and redirects are not followed. |
 | GPX | `.gpx` | GPX Layer | Waypoints, tracks, and routes can become separate layers. |
 | LandXML | `.xml`, `.landxml`, LandXML URL | LandXML Layer | Imports TIN surfaces, horizontal alignments, vertical profile metadata, and survey points; projected data requires a source CRS. |
 | Delimited text | CSV, TSV, and custom-delimited text | Delimited Text Layer | Map coordinate columns, specify their CRS, or geocode address columns. CSV without coordinates can also be loaded as a table. |
@@ -25,6 +25,7 @@ workflow and [Projects](user-guide/projects.md) for saving and reopening data.
 | AutoCAD | `.dxf`, `.dwg` | CAD (DXF/DWG) Layer | Select drawing layers and the source CRS. Coordinate Z values are kept and rendered in 3D unless you turn that off. |
 | Esri File Geodatabase | `.gdb` folder | File Geodatabase (GDB) | Desktop folder access; select a feature class. |
 | OpenStreetMap PBF | `.osm.pbf` | OSM PBF Layer | Reads an extract in the browser and adds the selected features. |
+| ICESat-2 / GEDI footprints | `.h5` granules of ICESat-2 ATL06/ATL08 and GEDI L2A/L2B/L4A | ICESat-2 / GEDI | Read in the browser into a point layer. Choose beams and fields, apply the product's quality filter, limit the read to the current view, and cap the point count; each footprint carries its beam, acquisition time and along-track distance. Download granules from NASA Earthdata, or load a sample granule from Source Cooperative. Large layers are stored inline in the project, which can pause autosave. |
 | Encoded polyline | Encoded strings or text files | Encoded Polyline | Precision 5 and 6, including Google, OSRM, Valhalla, and Mapbox conventions. |
 
 Vector import generally reprojects a known source CRS to EPSG:4326. Multi-file

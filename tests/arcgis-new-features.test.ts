@@ -44,6 +44,39 @@ describe("arcGISNewFeatureProperties", () => {
     });
   });
 
+  it("treats an empty default as no default, as hosted services publish it", () => {
+    const info: ArcGISEditInfo = {
+      ...base,
+      fields: [
+        ...fields,
+        { name: "INSPECTED", type: "esriFieldTypeDate", defaultValue: "" },
+        { name: "DEPTH", type: "esriFieldTypeDouble", defaultValue: "" },
+      ],
+    };
+    assert.deepEqual(arcGISNewFeatureProperties(info, {}), {
+      ASSET_TYPE: 2,
+      STATUS: 1,
+      NOTES: "none",
+    });
+  });
+
+  it("with keepGiven, never fills an attribute given as null (#3122)", () => {
+    const templated: ArcGISEditInfo = {
+      ...base,
+      templates: [{ prototype: { attributes: { MANUFACTURER: "MU", ASSET_TYPE: 3 } } }],
+    };
+    // A placeholder null on a drawn feature is still filled.
+    assert.equal(arcGISNewFeatureProperties(templated, { MANUFACTURER: null }).MANUFACTURER, "MU");
+    assert.deepEqual(
+      arcGISNewFeatureProperties(
+        templated,
+        { MANUFACTURER: null, status: null, ASSET_TYPE: null },
+        { keepGiven: true },
+      ),
+      { MANUFACTURER: null, status: null, ASSET_TYPE: null, NOTES: "none" },
+    );
+  });
+
   it("never replaces a value already on the feature, and drops server-managed ones", () => {
     assert.deepEqual(
       arcGISNewFeatureProperties(base, {

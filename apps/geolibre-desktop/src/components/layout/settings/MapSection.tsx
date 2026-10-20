@@ -1,14 +1,21 @@
 import {
+  ARCGIS_PROJECTION_PRESETS,
   DEFAULT_PROJECT_PREFERENCES,
   ELLIPSOIDS,
+  getMapCrsPreset,
+  MAP_CRS_PRESETS,
+  normalizeArcgisWkid,
+  normalizeMapCrs,
+  parseMapCrsEpsgCode,
+  type MapCrsPreset,
   type MapPreferences,
   type MapProjection,
   type MapScaleUnit,
 } from "@geolibre/core";
-import type { MapEngine } from "@geolibre/map";
+import { resolveMapCrs, type MapEngine } from "@geolibre/map";
 import { Button, Input, Label, Select } from "@geolibre/ui";
 import { Crosshair, RotateCcw, TriangleAlert } from "lucide-react";
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   COORDINATE_FORMATS,
@@ -20,6 +27,14 @@ import {
 import { CrsPickerInput } from "../../processing/CrsPickerInput";
 import { roundCoordinate } from "./settings-draft";
 import { useSettingsDraft } from "./SettingsDraftContext";
+
+/** The settings picker's groups of map CRS presets, by the body they map. */
+const MAP_CRS_GROUPS = ["earth", "moon", "mars", "other"] as const;
+
+function mapCrsGroup(preset: MapCrsPreset): (typeof MAP_CRS_GROUPS)[number] {
+  const body = preset.ellipsoidId;
+  return body === "earth" || body === "moon" || body === "mars" ? body : "other";
+}
 
 interface MapSectionProps {
   mapControllerRef: RefObject<MapEngine | null>;
@@ -68,6 +83,33 @@ export function MapSection({ mapControllerRef, liveProjection }: MapSectionProps
     };
   }, [coordinateFormat, coordinateEpsgCode]);
 
+  // The ArcGIS projection picker: a preset WKID, "" for Web Mercator, or
+  // "custom" with the WKID typed in its own field (issue #2708).
+  const arcgisWkid = normalizeArcgisWkid(draftPreferences.map.arcgisWkid);
+  const isPresetWkid = ARCGIS_PROJECTION_PRESETS.some((preset) => preset.wkid === arcgisWkid);
+  const [customWkid, setCustomWkid] = useState(() => arcgisWkid !== undefined && !isPresetWkid);
+  const [wkidText, setWkidText] = useState(() => (arcgisWkid ? String(arcgisWkid) : ""));
+  const projectionChoice =
+    customWkid || (arcgisWkid !== undefined && !isPresetWkid)
+      ? "custom"
+      : arcgisWkid === undefined
+        ? ""
+        : String(arcgisWkid);
+  // The map CRS picker: a preset id, "" for the default map, or "custom" with
+  // an EPSG code typed in its own field (issue #1128).
+  const mapCrs = normalizeMapCrs(draftPreferences.map.mapCrs);
+  const mapCrsEpsg = parseMapCrsEpsgCode(mapCrs);
+  const [customCrs, setCustomCrs] = useState(() => mapCrsEpsg !== null);
+  const [crsEpsgText, setCrsEpsgText] = useState(() =>
+    mapCrsEpsg === null ? "" : String(mapCrsEpsg),
+  );
+  // Set when the user picks "Custom EPSG code…": the first code written after
+  // that moves the body to Earth (the EPSG tables describe Earth), and later
+  // edits keep whatever body the user has chosen since.
+  const enteringCustomCrs = useRef(false);
+  // Whether the typed code resolves to a drawable CRS; null while checking.
+  const [crsEpsgKnown, setCrsEpsgKnown] = useState<boolean | null>(null);
+  const crsChoice = customCrs || mapCrsEpsg !== null ? "custom" : (mapCrs ?? "");
   const updateMapPreferences = (patch: Partial<MapPreferences>) => {
     setDraftPreferences((current) => ({
       ...current,
@@ -75,6 +117,53 @@ export function MapSection({ mapControllerRef, liveProjection }: MapSectionProps
     }));
     setError(null);
   };
+
+  // A projection only shows on the flat ArcGIS map, so choosing one turns the
+  // globe off; going back to Web Mercator leaves the globe setting alone.
+  const setArcgisWkid = (wkid: number | undefined) =>
+    updateMapPreferences(
+      wkid === undefined ? { arcgisWkid: undefined } : { arcgisWkid: wkid, projection: "mercator" },
+    );
+
+  // Write a typed EPSG code to the draft only once it resolves, so the map
+  // keeps its current CRS while the code is half typed or unknown.
+  const typedCrsCode = customCrs ? parseEpsgCodeInput(crsEpsgText) : null;
+  useEffect(() => {
+    if (typedCrsCode === null) {
+      setCrsEpsgKnown(null);
+      return;
+    }
+    let cancelled = false;
+    setCrsEpsgKnown(null);
+    void resolveMapCrs(`EPSG:${typedCrsCode}`).then((crs) => {
+      if (cancelled) return;
+      setCrsEpsgKnown(crs !== null);
+      if (!crs) return;
+      // A code a preset uses (3413, 3031, 4326) resolves to that preset: show
+      // the preset in the picker, as if it had been chosen there.
+      if (!crs.id.startsWith("EPSG:")) setCustomCrs(false);
+      const resetBody = enteringCustomCrs.current;
+      enteringCustomCrs.current = false;
+      // Opening the dialog on a saved code resolves it too: leave that draft
+      // (and the body it pairs with) alone, and write only a new code.
+      setDraftPreferences((current) =>
+        normalizeMapCrs(current.map.mapCrs) === crs.id
+          ? current
+          : {
+              ...current,
+              map: {
+                ...current.map,
+                mapCrs: crs.id,
+                ...(resetBody ? { ellipsoidId: "earth" } : {}),
+              },
+            },
+      );
+      setError(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [typedCrsCode, setDraftPreferences, setError]);
 
   const updateBoundsValue = (index: number, value: number) => {
     // Ignore a cleared field (valueAsNumber is NaN) so it does not silently
@@ -109,7 +198,16 @@ export function MapSection({ mapControllerRef, liveProjection }: MapSectionProps
   };
 
   const resetMapPreferences = () => {
-    updateMapPreferences(DEFAULT_PROJECT_PREFERENCES.map);
+    // The defaults carry no `arcgisWkid` or `mapCrs`, so clear them explicitly.
+    updateMapPreferences({
+      ...DEFAULT_PROJECT_PREFERENCES.map,
+      arcgisWkid: undefined,
+      mapCrs: undefined,
+    });
+    setCustomWkid(false);
+    setWkidText("");
+    setCustomCrs(false);
+    setCrsEpsgText("");
   };
 
   return (
@@ -302,6 +400,117 @@ export function MapSection({ mapControllerRef, liveProjection }: MapSectionProps
         </Select>
         <p className="text-xs text-muted-foreground">{t("settings.map.scaleUnitHint")}</p>
       </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="settings-map-crs">{t("settings.map.mapCrs")}</Label>
+        <Select
+          id="settings-map-crs"
+          value={crsChoice}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "custom") {
+              enteringCustomCrs.current = !customCrs;
+              setCustomCrs(true);
+              return;
+            }
+            setCustomCrs(false);
+            const preset = getMapCrsPreset(value);
+            // A preset maps one body, so measurements follow it there.
+            updateMapPreferences(
+              preset
+                ? { mapCrs: preset.id, ellipsoidId: preset.ellipsoidId }
+                : { mapCrs: undefined },
+            );
+          }}
+        >
+          <option value="">{t("settings.map.mapCrsDefault")}</option>
+          {MAP_CRS_GROUPS.map((group) => (
+            <optgroup key={group} label={t(`settings.map.mapCrsGroups.${group}`)}>
+              {MAP_CRS_PRESETS.filter((preset) => mapCrsGroup(preset) === group).map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {`${t(`settings.map.mapCrsPresets.${preset.id}`, { defaultValue: preset.name })} (${preset.code})`}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          <option value="custom">{t("settings.map.mapCrsCustom")}</option>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t("settings.map.mapCrsHint")}</p>
+      </div>
+      {crsChoice === "custom" ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-map-crs-epsg">{t("settings.map.mapCrsEpsg")}</Label>
+          <CrsPickerInput
+            id="settings-map-crs-epsg"
+            value={crsEpsgText}
+            onChange={(value) => setCrsEpsgText(String(value ?? ""))}
+          />
+          {crsEpsgKnown === false || (crsEpsgText.trim() !== "" && typedCrsCode === null) ? (
+            <p className="flex items-center gap-1 text-xs text-destructive">
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+              {t("settings.map.mapCrsEpsgUnknown")}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("settings.map.mapCrsEpsgHint")}</p>
+          )}
+        </div>
+      ) : null}
+      <div className="space-y-1.5">
+        <Label htmlFor="settings-arcgis-projection">{t("settings.map.arcgisProjection")}</Label>
+        <Select
+          id="settings-arcgis-projection"
+          value={projectionChoice}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "custom") {
+              setCustomWkid(true);
+              const wkid = normalizeArcgisWkid(wkidText);
+              if (wkid !== undefined) setArcgisWkid(wkid);
+              return;
+            }
+            setCustomWkid(false);
+            const wkid = normalizeArcgisWkid(value);
+            if (wkid !== undefined) setWkidText(String(wkid));
+            setArcgisWkid(wkid);
+          }}
+        >
+          <option value="">{t("settings.map.arcgisProjectionWebMercator")}</option>
+          {ARCGIS_PROJECTION_PRESETS.map((preset) => (
+            <option key={preset.id} value={String(preset.wkid)}>
+              {`${t(`settings.map.arcgisProjections.${preset.id}`, { defaultValue: preset.name })} (${preset.wkid})`}
+            </option>
+          ))}
+          <option value="custom">{t("settings.map.arcgisProjectionCustom")}</option>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t("settings.map.arcgisProjectionHint")}</p>
+      </div>
+      {projectionChoice === "custom" ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-arcgis-wkid">{t("settings.map.arcgisProjectionWkid")}</Label>
+          <Input
+            id="settings-arcgis-wkid"
+            inputMode="numeric"
+            value={wkidText}
+            onChange={(event) => {
+              const text = event.target.value;
+              setWkidText(text);
+              const wkid = normalizeArcgisWkid(text);
+              if (wkid !== undefined) setArcgisWkid(wkid);
+            }}
+          />
+          {normalizeArcgisWkid(wkidText) === undefined ? (
+            // The draft keeps the last valid projection until a usable code is
+            // typed; an unknown WKID is reported by the map when it loads.
+            <p className="flex items-center gap-1 text-xs text-destructive">
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+              {t("settings.map.arcgisProjectionWkidInvalid")}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t("settings.map.arcgisProjectionWkidHint")}
+            </p>
+          )}
+        </div>
+      ) : null}
       <div className="space-y-1.5">
         <Label htmlFor="settings-coordinate-format">{t("settings.map.coordinateFormat")}</Label>
         <Select

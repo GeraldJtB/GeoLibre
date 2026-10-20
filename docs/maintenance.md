@@ -75,6 +75,18 @@ at zoom >= 12 on Mesa GPUs without them). Before bumping it, confirm
   that tool's field offers metres and silently converts a dimensionless number as
   if it were a distance.
 
+### `geotiff` (`packages/processing/package.json`) — private `actualizedFields`
+
+`readRasterData` (`packages/processing/src/raster-client.ts`) pads a
+`SampleFormat` tag shorter than `SamplesPerPixel` so geotiff.js can decode
+band 2+ of such files (older geolibre-wasm COGs carry one). geotiff.js reads
+the tag from several places, so the pad replaces the parsed value in the
+image's private `fileDirectory.actualizedFields` map (keyed by tag number, 339).
+If a bump renames or reshapes that map, the pad stops working and those files
+fail again with "Unsupported data format/bitsPerSample";
+`readRasterData` warns when the map is missing, and
+`tests/upstream-contracts.test.ts` checks the map and key on a real image.
+
 ### `maplibre-gl`
 
 - **`GLOBE_CONTROL_TOGGLE_SELECTOR`** (`packages/map/src/globe-control-toggle.ts`)
@@ -114,6 +126,17 @@ at zoom >= 12 on Mesa GPUs without them). Before bumping it, confirm
   `tests/upstream-contracts.test.ts` reads the default offset out of the
   published bundle and fails if it moves; still play a story on a non-MapLibre
   renderer if the pin's anchor changed.
+- **Map CRS** (`packages/map/src/map-crs.ts`, issue #1128) uses
+  `addProjection`, `importScriptInWorkers` and the workers'
+  `setProjectionHandler`, all `@experimental` upstream, so a minor release may
+  change them. The handler script is proj4's UMD build (`proj4/dist/proj4.js`,
+  read with `?raw`) followed by one `setProjectionHandler` call: MapLibre
+  fetches it from a `blob:` URL and evaluates it with `eval`, which both CSPs
+  allow (`connect-src blob:`, `'unsafe-eval'`). If upstream starts loading
+  worker scripts as modules or by `importScripts`, or proj4 drops its UMD build,
+  GeoJSON on a custom CRS map silently draws in the wrong place (MapLibre only
+  warns). After a bump, run `tests/map-crs.test.ts` and pick a preset under
+  **Settings → Map** with a GeoJSON layer on the map.
 
 ### `@deck.gl/mapbox` and `@deck.gl/maplibre`
 
@@ -470,6 +493,21 @@ checks the hook points in both nested copies' `dist/maplibre-geoman.es.js`
 right-click a MultiLineString vertex in Edit mode. If upstream adds MultiLineString support, delete the
 wrapper.
 
+### `@carbonplan/zarr-layer` — private `minZoom`
+
+The Dynamical plugin draws its regional datasets (analyses and ensembles, which
+pack long time series into each chunk) only from a minimum zoom, so a zoomed-out
+view cannot read gigabytes. MapLibre's layer zoom range covers every render, but
+zarr-layer also fetches once while it initializes, gated on its own private
+`minZoom` field (set from the constructor's `minzoom`, read by
+`isZoomInRange`). The Zarr control does not forward `minzoom`, so
+`applyRegionalZoomRange` in `packages/plugins/src/plugins/maplibre-dynamical.ts`
+writes the field on the live layer, guarded by a type check. If upstream renames
+it the write silently stops, and only that first fetch loses its gate (the panel
+also jumps the map to the minimum zoom before adding, which covers the common
+case). `tests/upstream-contracts.test.ts` checks the field and its use; on a
+bump, check whether the Zarr control now forwards `minzoom` so the write can go.
+
 ### `zarr-cesium` (`packages/map/package.json`) — private internals
 
 `packages/map/src/cesium-zarr-imagery.ts` draws Zarr layers on the globe and
@@ -568,6 +606,33 @@ imports that way.
 `tests/raster-picker-mirror.test.ts` compares every value and both helpers with
 the package export, so a colormap added or renamed upstream fails
 `npm run test:frontend`. Regenerate the copy from the package when it does.
+
+### Datum shifts (`geotiff-geokeys-to-proj4`, `cog-tiler-wasm`, `maplibre-gl-raster`)
+
+The EPSG tables in `geotiff-geokeys-to-proj4` leave the datum shift
+(`+towgs84`) out for many national grids, and epsg.io's PROJJSON (the default
+resolver of the raster control's deck.gl engine) carries none either, so
+without help those rasters land 50 to 300 m off. `packages/core/src/datum-shift.ts`
+holds a small table of shifts and adds them wherever GeoLibre builds a
+projection from an EPSG code or GeoTIFF geokeys:
+
+- `cog-tiler-wasm` (the raster control's default engine) through its
+  `setSourceCrsResolver` hook (0.5.0 and later), installed by
+  `installCogTilerDatumShift` wherever GeoLibre imports the tiler and before
+  the raster control loads;
+- the deck.gl engine through the control's `epsgResolver` option
+  (`packages/plugins/src/plugins/epsg-datum-resolver.ts`);
+- `epsg-proj4.ts`, the OBIA `toPixel`, `polygonizeLabels` (which traces pixels
+  on a stand-in grid and places the vertices through the same definition),
+  the spectral profile, samgeo, point clouds and ArcGIS Zarr.
+
+`withDatumShift` leaves a definition that already names a transformation, so
+a `geotiff-geokeys-to-proj4` bump that adds shifts to its tables needs no
+change here. On a bump of any of the three packages, run
+`tests/datum-shift.test.ts`; it checks the British National Grid against a
+PROJ-computed point. Every entry in the table was checked against PROJ's best
+transformation for that code (within 2 m; 15 m for the NAD27 mean). Re-check
+any entry you add the same way.
 
 ### `tauri-plugin-persisted-scope` — private on-disk format
 
@@ -1193,10 +1258,11 @@ and every guard below blocks one of them.
    the one we cannot fix is `@clerk/shared`'s `getEnvVariable.mjs`, which does
    `import.meta.env[name]` with a computed name, so the inlined record lands in
    the `ClerkGate-*.js` chunk.
-3. `python/hatch_build.py` skips the JS build when `static/app` already exists
-   and `GEOLIBRE_FORCE_JS_BUILD` is unset. A local `python -m build` therefore
-   packages whatever an earlier `npm run build:embed` left staged, with no
-   JavaScript running at all.
+3. `python/hatch_build.py` skips each frontend build when its staged output
+   (`static/app/index.html` or `static/mcp/show-map.html`) already exists and
+   `GEOLIBRE_FORCE_JS_BUILD` is unset. A local `python -m build` can therefore
+   package assets left by earlier `npm run build:embed` / `npm run build:mcp-app`
+   runs, with no JavaScript running at all.
 
 ### The rules now
 

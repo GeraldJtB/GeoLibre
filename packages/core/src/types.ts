@@ -1716,6 +1716,24 @@ export interface MapPreferences {
    * basemap styles service requires one.
    */
   arcgisBasemap?: string;
+  /**
+   * ArcGIS-only projection of the flat map, as a WKID the ArcGIS Maps SDK
+   * resolves (`54099` Spilhaus, `54030` Robinson, ...). Absent means Web
+   * Mercator. Vector layers are reprojected on the client; tiled layers and
+   * basemaps cannot be, so they do not draw in another projection. The globe
+   * (a `SceneView`) ignores it. See `arcgis-projection.ts`.
+   */
+  arcgisWkid?: number;
+  /**
+   * Coordinate reference system of the flat MapLibre map (issue #1128): a
+   * preset id from `MAP_CRS_PRESETS` (polar and simple-cylindrical grids of
+   * Earth, the Moon, Mars and other bodies) or `"EPSG:<code>"`. Absent means
+   * the default Web Mercator map or globe. Tiles are not reprojected, so only
+   * GeoJSON, image/video overlays and WMS or ArcGIS export layers (asked for
+   * each tile's box in this CRS) draw; XYZ, vector tile and plugin layers are
+   * set aside, and the globe and terrain are off. See `map-crs.ts`.
+   */
+  mapCrs?: string;
   /** Cesium imagery override; absent follows the shared project basemap. */
   cesiumBasemap?: import("./cesium-imagery").CesiumBasemapId;
   /**
@@ -1781,6 +1799,38 @@ export interface GeocodingPreferences {
   reverseEndpoint?: string;
   /** Contact email sent to identify the client (used by Nominatim). */
   email?: string;
+  /** Named organization-hosted ArcGIS GeocodeServer locators. */
+  locators?: GeocodingLocator[];
+  /** The {@link GeocodingLocator.id} used by the `arcgis-locator` provider. */
+  locatorId?: string;
+}
+
+/**
+ * An organization-hosted ArcGIS GeocodeServer locator. Everything here is
+ * nonsecret: the URL is stored without its query string, so a pasted token never
+ * reaches the project file, and a secured locator borrows the token of the
+ * portal named by `portalUrl` at request time.
+ *
+ * The capability fields are read from the service's `?f=json` metadata when the
+ * locator is checked in Settings; they are absent until then.
+ */
+export interface GeocodingLocator {
+  /** Stable id, unique within the project. */
+  id: string;
+  /** Display name, e.g. "County Parcel Locator". */
+  name: string;
+  /** The GeocodeServer base URL, ending in `/GeocodeServer`. */
+  url: string;
+  /** Portal whose sign-in authorizes this locator, when it is secured. */
+  portalUrl?: string;
+  /** The single-line input field the locator publishes (usually `SingleLine`). */
+  singleLineField?: string;
+  /** The structured input fields the locator publishes, in service order. */
+  addressFields?: string[];
+  /** Whether the service advertises `reverseGeocode`. */
+  reverse?: boolean;
+  /** Whether the service advertises `suggest`. */
+  suggest?: boolean;
 }
 
 export interface ProjectPreferences {
@@ -2472,6 +2522,14 @@ export interface GeoLibreProject {
   models?: ProcessingModel[];
   /** Recorded processing tool runs (Processing History; issue #1292). */
   processingHistory?: ProcessingRun[];
+  /**
+   * Object-Based Analysis workbench state and run provenance (issue #3053):
+   * settings, classes, and the tool calls, parameters, seeds and engine
+   * versions behind the last segmentation, measurement and classification.
+   * A versioned JSON object owned by the desktop app; omitted until the
+   * workbench is used.
+   */
+  obia?: Record<string, unknown>;
   /** Saved Dashboard panel chart widgets (issue #401). */
   widgets?: DashboardWidget[];
   /**
