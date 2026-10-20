@@ -33,14 +33,17 @@ import {
   subscribeToExternalPluginLoads,
 } from "../usePlugins";
 import { useDesktopSettingsStore } from "../useDesktopSettings";
+import type { LayoutOptions } from "../useLayoutOptions";
 
 interface PluginDeepLinkOptions {
   mapControllerRef: RefObject<MapEngine | null>;
   enforceViewerPlugins: () => void;
-  /** Whether the app runs in the read-only `layout=viewer` preset. */
-  viewer: boolean;
-  /** Whether the viewer lets the geometry editor run (`?layout=viewer&draw`). */
-  viewerDrawing: boolean;
+  /**
+   * `viewer`: whether the app runs in the read-only `layout=viewer` preset.
+   * `viewerDrawing`: whether that viewer lets the geometry editor run
+   * (`?layout=viewer&draw`).
+   */
+  layoutOptions: Pick<LayoutOptions, "viewer" | "viewerDrawing">;
   externalPluginsReady: boolean;
   mapReadyGeneration: number;
   /**
@@ -122,8 +125,7 @@ function reportActivationFailure(id: string, error: unknown): void {
 export function usePluginDeepLink({
   mapControllerRef,
   enforceViewerPlugins,
-  viewer,
-  viewerDrawing,
+  layoutOptions: { viewer, viewerDrawing },
   externalPluginsReady,
   mapReadyGeneration,
   projectUrlSettled,

@@ -59,7 +59,10 @@ export function useViewerPluginGuard(
   // restore and the `?plugin=` deep link construct it from effects. A
   // child's effect runs before this component's own, so an effect here could
   // lose that race; setting the flag while rendering cannot, because every
-  // effect in the tree runs after the render. The write is idempotent.
+  // effect in the tree runs after the render. The write is idempotent, and
+  // `layoutOptions.viewer` comes from the launch URL, so it never changes for
+  // the page's lifetime: an editor built earlier can never hold a stale value,
+  // and there is nothing to reset on unmount.
   setGeoEditorFileTools(!layoutOptions.viewer);
 
   useEffect(() => {
