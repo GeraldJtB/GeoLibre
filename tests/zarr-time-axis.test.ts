@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import {
   __resetZarrTimeAttributeCacheForTests,
   decodeCfTimeValues,
@@ -394,5 +394,243 @@ describe("readCoordinateTimeAttributes", () => {
       "0/time/.zattrs",
       "0/time/zarr.json",
     ]);
+  });
+});
+
+// A CF time coordinate may name a `bounds` variable of shape (n, 2) holding each
+// step's [start, end). A time slider has to read it: the coordinate value alone
+// is only the interval start.
+
+/** A Zarr v3 float64 array of the given shape, as the documents a store serves. */
+function v3Float64Array(shape: number[], values: number[]): { meta: unknown; chunk: Uint8Array } {
+  return {
+    meta: {
+      zarr_format: 3,
+      node_type: "array",
+      shape,
+      data_type: "float64",
+      chunk_grid: { name: "regular", configuration: { chunk_shape: shape } },
+      chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+      fill_value: 0,
+      codecs: [{ name: "bytes", configuration: { endian: "little" } }],
+    },
+    chunk: new Uint8Array(new Float64Array(values).buffer),
+  };
+}
+
+/** Serve `files` (JSON documents or raw chunk bytes) from global fetch. */
+function installGlobalFetch(files: Record<string, unknown>): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    // zarrita hands fetch a Request, the metadata walk a string.
+    const body = files[input instanceof Request ? input.url : String(input)];
+    if (body === undefined) return new Response("Not found", { status: 404 });
+    if (body instanceof Uint8Array) return new Response(body as BodyInit, { status: 200 });
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+describe("the CF `bounds` attribute of a time coordinate", () => {
+  it("is read from v2 consolidated metadata, including a multiscale level prefix", async () => {
+    const { fetchImpl } = stubFetch({
+      "https://example.org/cube.zarr/.zmetadata": {
+        metadata: {
+          "0/time/.zattrs": { units: "days since 1970-01-01", bounds: "time_bnds" },
+        },
+      },
+    });
+    assert.deepEqual(
+      await fetchZarrTimeAttributes("https://example.org/cube.zarr", "time", { fetchImpl }),
+      { units: "days since 1970-01-01", bounds: "time_bnds" },
+    );
+  });
+
+  it("is read from v3 consolidated metadata", async () => {
+    const { fetchImpl } = stubFetch({
+      "https://example.org/cube.zarr/zarr.json": {
+        consolidated_metadata: {
+          metadata: {
+            time: { attributes: { units: "days since 1970-01-01", bounds: "time_bnds" } },
+          },
+        },
+      },
+    });
+    assert.deepEqual(
+      await fetchZarrTimeAttributes("https://example.org/cube.zarr", "time", { fetchImpl }),
+      { units: "days since 1970-01-01", bounds: "time_bnds" },
+    );
+  });
+
+  it("is read from the coordinate's own v2 and v3 documents", async () => {
+    const v2 = stubFetch({
+      "https://example.org/cube.zarr/time/.zattrs": {
+        units: "days since 1970-01-01",
+        bounds: "time_bnds",
+      },
+    });
+    assert.deepEqual(await fetchZarrTimeAttributes("https://example.org/cube.zarr", "time", v2), {
+      units: "days since 1970-01-01",
+      bounds: "time_bnds",
+    });
+    const v3 = stubFetch({
+      "https://example.org/cube3.zarr/time/zarr.json": {
+        attributes: { units: "days since 1970-01-01", bounds: "time_bnds" },
+      },
+    });
+    assert.deepEqual(await fetchZarrTimeAttributes("https://example.org/cube3.zarr", "time", v3), {
+      units: "days since 1970-01-01",
+      bounds: "time_bnds",
+    });
+  });
+
+  it("is not reported when the coordinate declares none", async () => {
+    const { fetchImpl } = stubFetch({
+      "https://example.org/cube.zarr/.zmetadata": {
+        metadata: { "time/.zattrs": { units: "days since 1970-01-01" } },
+      },
+    });
+    assert.deepEqual(
+      await fetchZarrTimeAttributes("https://example.org/cube.zarr", "time", { fetchImpl }),
+      { units: "days since 1970-01-01" },
+    );
+  });
+});
+
+describe("resolveZarrTimeAxis with bounds", () => {
+  const STORE = "https://example.org/cube.zarr";
+  const attributes = { units: "days since 2020-01-01", bounds: "time_bnds" };
+
+  it("decodes the bounds like the coordinate, as [start, end) pairs", async () => {
+    const readBounds = mock.fn(async () => [0, 10, 10, 20, 30, 40]);
+    const axis = await resolveZarrTimeAxis(
+      STORE,
+      { time: [0, 10, 30] },
+      { attributes, readBounds },
+    );
+    assert.equal(readBounds.mock.callCount(), 1, "the bounds are read once");
+    assert.deepEqual(readBounds.mock.calls[0].arguments, ["time_bnds"]);
+    assert.deepEqual(axis?.bounds, [
+      [Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 11)],
+      [Date.UTC(2020, 0, 11), Date.UTC(2020, 0, 21)],
+      [Date.UTC(2020, 0, 31), Date.UTC(2020, 1, 10)],
+    ]);
+  });
+
+  it("decodes bounds in the coordinate's own unit, e.g. seconds", async () => {
+    const axis = await resolveZarrTimeAxis(
+      STORE,
+      { time: [0, 86_400] },
+      {
+        attributes: { units: "seconds since 1970-01-01", bounds: "time_bnds" },
+        readBounds: async () => [0, 86_400, 86_400, 172_800],
+      },
+    );
+    assert.deepEqual(axis?.bounds, [
+      [0, 86_400_000],
+      [86_400_000, 172_800_000],
+    ]);
+  });
+
+  it("reads the bounds array from an HTTP store (v3, per-array metadata)", async () => {
+    const bounds = v3Float64Array([2, 2], [0, 10, 10, 20]);
+    const restore = installGlobalFetch({
+      [`${STORE}/time/zarr.json`]: { attributes },
+      [`${STORE}/time_bnds/zarr.json`]: bounds.meta,
+      [`${STORE}/time_bnds/c/0/0`]: bounds.chunk,
+    });
+    try {
+      const axis = await resolveZarrTimeAxis(STORE, { time: [0, 10] });
+      assert.deepEqual(axis?.bounds, [
+        [Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 11)],
+        [Date.UTC(2020, 0, 11), Date.UTC(2020, 0, 21)],
+      ]);
+    } finally {
+      restore();
+      __resetZarrTimeAttributeCacheForTests();
+    }
+  });
+
+  it("finds the bounds through v3 consolidated metadata when none were passed in", async () => {
+    const bounds = v3Float64Array([2, 2], [0, 10, 10, 20]);
+    const restore = installGlobalFetch({
+      [`${STORE}/zarr.json`]: {
+        consolidated_metadata: { metadata: { time: { attributes } } },
+      },
+      [`${STORE}/time_bnds/zarr.json`]: bounds.meta,
+      [`${STORE}/time_bnds/c/0/0`]: bounds.chunk,
+    });
+    try {
+      const axis = await resolveZarrTimeAxis(STORE, { time: [0, 10] });
+      assert.equal(axis?.bounds?.length, 2);
+      assert.deepEqual(axis?.bounds?.[0], [Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 11)]);
+    } finally {
+      restore();
+      __resetZarrTimeAttributeCacheForTests();
+    }
+  });
+
+  it("keeps the axis and logs a debug line when the bounds array is missing", async () => {
+    const restore = installGlobalFetch({ [`${STORE}/time/zarr.json`]: { attributes } });
+    const debug = mock.method(console, "debug", () => {});
+    try {
+      const axis = await resolveZarrTimeAxis(STORE, { time: [0, 10] });
+      assert.deepEqual(axis?.values, [Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 11)]);
+      assert.equal(axis?.bounds, undefined);
+      assert.equal(debug.mock.callCount(), 1);
+    } finally {
+      debug.mock.restore();
+      restore();
+      __resetZarrTimeAttributeCacheForTests();
+    }
+  });
+
+  it("keeps the axis and logs a debug line when reading the bounds throws", async () => {
+    const debug = mock.method(console, "debug", () => {});
+    try {
+      const axis = await resolveZarrTimeAxis(
+        STORE,
+        { time: [0, 10] },
+        {
+          attributes,
+          readBounds: async () => {
+            throw new Error("boom");
+          },
+        },
+      );
+      assert.equal(axis?.values.length, 2);
+      assert.equal(axis?.bounds, undefined);
+      assert.equal(debug.mock.callCount(), 1);
+    } finally {
+      debug.mock.restore();
+    }
+  });
+
+  it("drops bounds whose length does not match the axis", async () => {
+    const debug = mock.method(console, "debug", () => {});
+    try {
+      const axis = await resolveZarrTimeAxis(
+        STORE,
+        { time: [0, 10] },
+        { attributes, readBounds: async () => [0, 10, 10] },
+      );
+      assert.equal(axis?.bounds, undefined);
+    } finally {
+      debug.mock.restore();
+    }
+  });
+
+  it("does not look for bounds on an axis that declares none", async () => {
+    const readBounds = mock.fn(async () => [0, 1]);
+    const axis = await resolveZarrTimeAxis(
+      STORE,
+      { time: [0, 10] },
+      { attributes: { units: "days since 2020-01-01" }, readBounds },
+    );
+    assert.equal(readBounds.mock.callCount(), 0);
+    assert.equal(axis?.bounds, undefined);
+    assert.deepEqual(axis?.values, [Date.UTC(2020, 0, 1), Date.UTC(2020, 0, 11)]);
   });
 });

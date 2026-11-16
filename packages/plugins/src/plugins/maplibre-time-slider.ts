@@ -16,10 +16,10 @@ import {
 import {
   getTemporalLayerAdapter,
   isSelectorTimeBinding,
-  nearestTimeIndex,
   resolveSelectorDisplayUnits,
   subscribeTemporalLayers,
   TIME_GRANULARITIES,
+  timeIndexForDate,
   toEpochMsAxis,
   type SelectorTimeBinding,
   type TemporalLayerAdapter,
@@ -819,7 +819,7 @@ function applySelectorTimes(control: TimeSliderControl): void {
   for (const { id, adapter } of selectors) {
     const axis = toEpochMsAxis(adapter.getTimeValues());
     if (!axis) continue;
-    const index = nearestTimeIndex(axis, targetMs);
+    const index = timeIndexForDate(axis, adapter.getTimeBounds?.(), targetMs);
     if (index < 0 || appliedTimeIndices.get(id) === index) continue;
     appliedTimeIndices.set(id, index);
     // The adapter is handed the slice's own date, not the timeline's, so a

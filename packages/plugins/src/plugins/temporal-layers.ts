@@ -22,6 +22,13 @@ export interface TemporalLayerAdapter {
    * accepted; see {@link toEpochMsAxis} for how each is read.
    */
   getTimeValues: () => ReadonlyArray<Date | number | string>;
+  /**
+   * Optional `[start, end)` interval of each time value, as epoch milliseconds
+   * in index order, for an axis whose values are interval starts (a CF `bounds`
+   * variable). When present, the Time Slider selects the step whose interval
+   * contains the date and uses the nearest value only outside every interval.
+   */
+  getTimeBounds?: () => ReadonlyArray<readonly [number, number]> | null | undefined;
   /** Apply a date to the layer, snapping it to the nearest time value. */
   setTime: (date: Date) => void | Promise<void>;
   /**
@@ -141,6 +148,34 @@ export function nearestTimeIndex(axis: readonly number[], targetMs: number): num
     }
   }
   return best;
+}
+
+/**
+ * Index of the time step a date belongs to.
+ *
+ * With `bounds` (CF `[start, end)` per step), the step whose interval contains
+ * the date wins, so a date inside a long interval is not handed to the next
+ * step just because that step's start is closer. A date in no interval (a gap,
+ * or outside the axis) and an axis without bounds fall back to
+ * {@link nearestTimeIndex}. An interval that is not a finite pair is skipped.
+ *
+ * @param axis - Epoch-millisecond values, in index order.
+ * @param bounds - Epoch-millisecond `[start, end)` per index, or null.
+ * @param targetMs - The timeline's current date, in epoch milliseconds.
+ * @returns The step's index, or -1 when the axis holds no usable value.
+ */
+export function timeIndexForDate(
+  axis: readonly number[],
+  bounds: ReadonlyArray<readonly [number, number]> | null | undefined,
+  targetMs: number,
+): number {
+  if (bounds) {
+    for (let i = 0; i < bounds.length; i += 1) {
+      const interval = bounds[i];
+      if (interval && targetMs >= interval[0] && targetMs < interval[1]) return i;
+    }
+  }
+  return nearestTimeIndex(axis, targetMs);
 }
 
 /**

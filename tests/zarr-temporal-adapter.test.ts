@@ -304,6 +304,63 @@ describe("a Zarr layer's temporal adapter", () => {
     }
   });
 
+  it("steps to the interval that contains the date when the axis declares CF bounds", async () => {
+    // Two periods, values = interval start (day 0 and day 100), bounds = [start, end).
+    // Day 40 is inside the first period but nearer the start of the second.
+    dimensionValues = { time: [0, 100], lat: [0, 1], lon: [0, 1] };
+    const bounds = new Uint8Array(new Float64Array([0, 60, 100, 160]).buffer);
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      // zarrita hands fetch a Request, the metadata walk a string.
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === `${STORE_URL}/zarr.json`) {
+        return new Response(
+          JSON.stringify({
+            consolidated_metadata: {
+              metadata: {
+                time: { attributes: { units: "days since 2020-01-01", bounds: "time_bnds" } },
+              },
+            },
+          }),
+        );
+      }
+      if (url === `${STORE_URL}/time_bnds/zarr.json`) {
+        return new Response(
+          JSON.stringify({
+            zarr_format: 3,
+            node_type: "array",
+            shape: [2, 2],
+            data_type: "float64",
+            chunk_grid: { name: "regular", configuration: { chunk_shape: [2, 2] } },
+            chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+            fill_value: 0,
+            codecs: [{ name: "bytes", configuration: { endian: "little" } }],
+          }),
+        );
+      }
+      if (url === `${STORE_URL}/time_bnds/c/0/0`) return new Response(bounds as BodyInit);
+      return new Response("Not found", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const id = await addZarrRasterLayer(app, { url: STORE_URL, variable: "t2m" });
+      const adapter = await waitForAdapter(id);
+      assert.ok(adapter);
+      const day = 86_400_000;
+      const start = Date.UTC(2020, 0, 1);
+      assert.deepEqual(adapter.getTimeBounds?.(), [
+        [start, start + 60 * day],
+        [start + 100 * day, start + 160 * day],
+      ]);
+      await adapter.setTime(new Date(start + 40 * day));
+      assert.deepEqual(selectorCalls.at(-1), { layerId: id, selector: { time: 0 } });
+      // Day 80 is in the gap between the periods; the nearest start is day 100.
+      await adapter.setTime(new Date(start + 80 * day));
+      assert.deepEqual(selectorCalls.at(-1), { layerId: id, selector: { time: 1 } });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("registers no adapter for a cube with no time dimension", async () => {
     dimensionValues = { month: [1, 2, 3], band: [0, 1] };
     const restoreFetch = installFetchStub(null);

@@ -39,8 +39,8 @@ import {
 } from "../kerchunk-reference-store";
 import { ensureMercatorProjection } from "../map-projection-utils";
 import {
-  nearestTimeIndex,
   registerTemporalLayer,
+  timeIndexForDate,
   unregisterTemporalLayer,
 } from "../temporal-layers";
 import {
@@ -978,8 +978,9 @@ function registerZarrTemporalAdapter(
     registerTemporalLayer(layerId, {
       dimension: axis.dimension,
       getTimeValues: () => axis.values,
+      ...(axis.bounds ? { getTimeBounds: () => axis.bounds } : {}),
       setTime: async (date) => {
-        const index = nearestTimeIndex(axis.values, date.getTime());
+        const index = timeIndexForDate(axis.values, axis.bounds, date.getTime());
         if (index < 0) return;
         const current = useAppStore.getState().layers.find((layer) => layer.id === layerId);
         await setZarrLayerSelector(layerId, {

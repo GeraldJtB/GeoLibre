@@ -1364,6 +1364,7 @@ That third kind is expressed as a **temporal adapter**:
 ```typescript
 export interface TemporalLayerAdapter {
   getTimeValues: () => ReadonlyArray<Date | number | string>; // the time coordinate, in index order
+  getTimeBounds?: () => ReadonlyArray<readonly [number, number]> | null; // optional [start, end) per value, epoch ms
   setTime: (date: Date) => void | Promise<void>; // apply a date to the layer
   dimension?: string; // the axis name, default "time"
   granularity?: "hour" | "day" | "month" | "year"; // stepping unit; derived from the axis span when omitted
@@ -1371,9 +1372,9 @@ export interface TemporalLayerAdapter {
 }
 ```
 
-The slider owns the snapping: it reads `getTimeValues()`, finds the index nearest the current date, and calls `setTime()` with **that slice's own date**, skipping a tick that lands on the slice already showing. So a daily cube under a month-stepping timeline costs one chunk fetch per changed index, not one per tick. Calls are throttled while the handle is dragged, with the trailing edge always applied. Accepted value forms are `Date`s, epoch seconds/milliseconds, bare calendar years, and date strings.
+The slider owns the snapping: it reads `getTimeValues()`, finds the index nearest the current date (or, when `getTimeBounds()` is provided, the index whose `[start, end)` interval contains it, falling back to the nearest value only outside every interval), and calls `setTime()` with **that slice's own date**, skipping a tick that lands on the slice already showing. So a daily cube under a month-stepping timeline costs one chunk fetch per changed index, not one per tick. Calls are throttled while the handle is dragged, with the trailing edge always applied. Accepted value forms are `Date`s, epoch seconds/milliseconds, bare calendar years, and date strings.
 
-A Zarr layer added with `addZarrLayer` **registers its own adapter** for its `time` axis (decoding CF `units` such as `"days since 1970-01-01"` from the store's metadata), so it needs no call here. Use `registerTemporalLayer` for a custom layer you render yourself:
+A Zarr layer added with `addZarrLayer` **registers its own adapter** for its `time` axis (decoding CF `units` such as `"days since 1970-01-01"` from the store's metadata, and the CF `bounds` variable of the axis when it declares one, so each step covers its own `[start, end)` interval), so it needs no call here. Use `registerTemporalLayer` for a custom layer you render yourself:
 
 ```typescript
 const times = frames.map((frame) => frame.timestamp); // Date[] | number[] | string[]

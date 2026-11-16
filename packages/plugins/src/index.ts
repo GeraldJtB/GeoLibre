@@ -1467,6 +1467,7 @@ export {
   nearestTimeIndex,
   registerTemporalLayer,
   subscribeTemporalLayers,
+  timeIndexForDate,
   toEpochMsAxis,
   unregisterTemporalLayer,
   type SelectorTimeBinding,

@@ -10,6 +10,7 @@ import {
   registerTemporalLayer,
   resolveSelectorDisplayUnits,
   subscribeTemporalLayers,
+  timeIndexForDate,
   toEpochMsAxis,
   type TemporalLayerAdapter,
 } from "../packages/plugins/src/plugins/temporal-layers.ts";
@@ -83,6 +84,55 @@ describe("nearestTimeIndex", () => {
     assert.equal(nearestTimeIndex(withGap, Date.UTC(2020, 0, 1)), 1);
     assert.equal(nearestTimeIndex([Number.NaN], 0), -1);
     assert.equal(nearestTimeIndex([], 0), -1);
+  });
+});
+
+describe("timeIndexForDate", () => {
+  // Two growing periods stored the CF way: the axis value is the interval start,
+  // and the bounds give [start, end). The gap (Aug-Sep 2026) belongs to neither.
+  const axis = [Date.UTC(2025, 9, 1), Date.UTC(2026, 9, 1)];
+  const bounds: Array<[number, number]> = [
+    [Date.UTC(2025, 9, 1), Date.UTC(2026, 7, 1)],
+    [Date.UTC(2026, 9, 1), Date.UTC(2027, 7, 1)],
+  ];
+
+  it("selects the interval that contains the date, not the nearest start", () => {
+    // 2026-06-01 is inside the first interval but closer to the second start.
+    assert.equal(nearestTimeIndex(axis, Date.UTC(2026, 5, 1)), 1);
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2026, 5, 1)), 0);
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2027, 0, 15)), 1);
+  });
+
+  it("treats the interval as [start, end): the start is in, the end is out", () => {
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2025, 9, 1)), 0);
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2026, 6, 31, 23)), 0);
+    // The end instant is in no interval, so it falls back to the nearest start
+    // (the second period starts two months later, the first nine months earlier).
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2026, 7, 1)), 1);
+  });
+
+  it("falls back to the nearest value when the date lies in no interval", () => {
+    // Mid-September 2026 is in the gap; the second start is nearer.
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2026, 8, 15)), 1);
+    // Before the first and after the last interval clamp to the ends.
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2020, 0, 1)), 0);
+    assert.equal(timeIndexForDate(axis, bounds, Date.UTC(2030, 0, 1)), 1);
+  });
+
+  it("behaves like nearestTimeIndex when there are no bounds", () => {
+    for (const target of [Date.UTC(2026, 5, 1), Date.UTC(2026, 8, 15), Date.UTC(2020, 0, 1)]) {
+      assert.equal(timeIndexForDate(axis, null, target), nearestTimeIndex(axis, target));
+      assert.equal(timeIndexForDate(axis, undefined, target), nearestTimeIndex(axis, target));
+    }
+  });
+
+  it("ignores intervals it cannot read", () => {
+    const broken: Array<[number, number]> = [
+      [Number.NaN, Number.NaN],
+      [Date.UTC(2026, 9, 1), Date.UTC(2027, 7, 1)],
+    ];
+    assert.equal(timeIndexForDate(axis, broken, Date.UTC(2026, 5, 1)), 1);
+    assert.equal(timeIndexForDate(axis, broken, Date.UTC(2027, 0, 1)), 1);
   });
 });
 

@@ -204,10 +204,12 @@ export function pickTimeDimension(
   return null;
 }
 
-/** The `units`/`calendar` attributes of a store's time coordinate. */
+/** The `units`/`calendar`/`bounds` attributes of a store's time coordinate. */
 export interface ZarrTimeAttributes {
   units?: string;
   calendar?: string;
+  /** Name of the CF `bounds` variable, shape `(n, 2)`, holding each step's `[start, end)`. */
+  bounds?: string;
 }
 
 /** Options for {@link fetchZarrTimeAttributes}. */
@@ -338,16 +340,18 @@ export async function readCoordinateTimeAttributes(
   return null;
 }
 
-/** Pull `units`/`calendar` out of an attributes object, if it has either. */
+/** Pull `units`/`calendar` (and `bounds`) out of an attributes object, if it has units or calendar. */
 function pickTimeAttributes(attributes: unknown): ZarrTimeAttributes | null {
   if (!attributes || typeof attributes !== "object") return null;
   const record = attributes as Record<string, unknown>;
   const units = typeof record.units === "string" ? record.units : undefined;
   const calendar = typeof record.calendar === "string" ? record.calendar : undefined;
+  const bounds = typeof record.bounds === "string" && record.bounds ? record.bounds : undefined;
   if (units === undefined && calendar === undefined) return null;
   return {
     ...(units !== undefined ? { units } : {}),
     ...(calendar !== undefined ? { calendar } : {}),
+    ...(bounds !== undefined ? { bounds } : {}),
   };
 }
 
@@ -396,6 +400,12 @@ export interface ZarrTimeAxis {
   dimension: string;
   /** The axis in epoch milliseconds, index-aligned with the store. */
   values: number[];
+  /**
+   * `[start, end)` of each step in epoch milliseconds, index-aligned with
+   * {@link values}, when the coordinate declares CF `bounds` and they could be
+   * read. Absent otherwise, and the axis is then matched by nearest value.
+   */
+  bounds?: Array<[number, number]>;
 }
 
 /** Options for {@link resolveZarrTimeAxis}. */
@@ -409,6 +419,13 @@ export interface ResolveZarrTimeAxisOptions extends FetchZarrTimeAttributesOptio
    * only produce a run of 404s.
    */
   attributes?: ZarrTimeAttributes | null;
+  /**
+   * Reads the CF `bounds` variable by name, as `n * 2` values in row-major
+   * `(n, 2)` order, in the coordinate's own units. Defaults to reading it over
+   * HTTP from the store, which is only attempted when the store's own metadata
+   * supplied the attributes (not for a kerchunk manifest or a local folder).
+   */
+  readBounds?: (name: string) => Promise<ArrayLike<number> | null | undefined>;
 }
 
 /**
@@ -450,12 +467,80 @@ export async function resolveZarrTimeAxis(
     const units = parseCfTimeUnits(attributes?.units);
     if (units) {
       const values = decodeCfTimeValues(raw, units);
-      return values.some((value) => Number.isFinite(value)) ? { dimension, values } : null;
+      if (!values.some((value) => Number.isFinite(value))) return null;
+      // Only a store whose own metadata supplied the attributes is known to be
+      // an HTTP Zarr store that can be asked for a second array.
+      const readBounds =
+        options.readBounds ??
+        (options.attributes === undefined
+          ? (name: string) => readHttpBounds(name, storeUrl, options)
+          : undefined);
+      const bounds =
+        attributes?.bounds && readBounds
+          ? await readTimeBounds(attributes.bounds, units, values.length, readBounds)
+          : undefined;
+      return { dimension, values, ...(bounds ? { bounds } : {}) };
     }
   }
 
   const values = raw.map((value) => parseTimeValue(value) ?? Number.NaN);
   return values.some((value) => Number.isFinite(value)) ? { dimension, values } : null;
+}
+
+/**
+ * Read and decode a coordinate's CF `bounds` variable, once. Any failure (an
+ * absent or unreadable array, a shape that is not `(n, 2)`) leaves the axis
+ * without bounds, so the Time Slider falls back to the nearest value.
+ */
+async function readTimeBounds(
+  name: string,
+  units: CfTimeUnits,
+  length: number,
+  readBounds: NonNullable<ResolveZarrTimeAxisOptions["readBounds"]>,
+): Promise<Array<[number, number]> | undefined> {
+  try {
+    const raw = await readBounds(name);
+    if (!raw || raw.length !== length * 2) {
+      throw new Error(`expected ${length * 2} values, got ${raw?.length ?? 0}`);
+    }
+    const decoded = decodeCfTimeValues(Array.from(raw), units);
+    return Array.from({ length }, (_, i): [number, number] => [decoded[2 * i], decoded[2 * i + 1]]);
+  } catch (error) {
+    console.debug(`[zarr] Time bounds "${name}" not used; matching the nearest value`, error);
+    return undefined;
+  }
+}
+
+/**
+ * Read a `(n, 2)` bounds array from an HTTP Zarr store with zarrita, which
+ * resolves v2 and v3 array metadata itself. A multiscale pyramid keeps it one
+ * level down, so that prefix is tried second.
+ */
+async function readHttpBounds(
+  name: string,
+  storeUrl: string,
+  options: ResolveZarrTimeAxisOptions,
+): Promise<ArrayLike<number>> {
+  const zarr = await import("zarrita");
+  const store = new zarr.FetchStore(storeUrl.replace(/\/+$/, ""), {
+    ...(options.headers ? { overrides: { headers: options.headers } } : {}),
+  });
+  const openArray = (path: string) => zarr.open(zarr.root(store).resolve(path), { kind: "array" });
+  let array: Awaited<ReturnType<typeof openArray>> | undefined;
+  for (const prefix of ["", "0/"]) {
+    try {
+      array = await openArray(`${prefix}${name}`);
+      break;
+    } catch (error) {
+      if (!(error instanceof zarr.NotFoundError) || prefix) throw error;
+    }
+  }
+  if (!array || array.shape.length !== 2 || array.shape[1] !== 2) {
+    throw new Error("bounds variable is not shaped (n, 2)");
+  }
+  // CF time arrays are often int64, which zarrita reads as BigInt.
+  const { data } = await zarr.get(array);
+  return Array.from(data as ArrayLike<number | bigint>, Number);
 }
 
 /** Clear the metadata lookup cache. Exported for tests. */
